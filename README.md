@@ -22,6 +22,7 @@ The goal is to match Godot's capability in **2D and 3D**.
 
 ## Documents
 - [Design document](docs/DESIGN.md)
+- [Implementation plan](docs/IMPLEMENTATION_PLAN.md)
 - [Name check](docs/NAME_CHECK.md)
 
 ## Licence
