@@ -1,7 +1,7 @@
-# Poncelet Engine — Design Document (Draft 0.2)
+# Poncelet Engine — Design Document (Draft 0.3)
 
 > Name: **Poncelet** (chosen 2026-11-19, after Jean-Victor Poncelet, projective geometry; see `docs/NAME_CHECK.md`).
-> Author: Robert Boettcher, with Grok Bot. Status: draft 0.2, 2026-11-19 (adds full 2D + 3D scope; editor is the first Steam product).
+> Author: Robert Boettcher, with Grok Bot. Status: draft 0.3, 2026-11-19 (full 2D + 3D; editor is the first Steam product; Linux-first development, Steam/Apple deferred).
 > Clean-room: Godot (MIT) was studied **for architecture only**. No Godot code, text, or assets are copied here.
 > Everything below describes our own design.
 
@@ -363,16 +363,31 @@ These rules apply to everything in `pc-core` and are recommended in game code.
 
 ## 10. Build, packaging, and Steam
 
+### 10.0 Development policy (decided 2026-11-19)
+- **Primary development and testing happen on Robert's Linux Mint laptop (x86-64)** with GNAT 12.3 + gprbuild
+  (Alire optional). Every feature must run and pass tests there first.
+- **No sign-ups for now:** no Steamworks partner account and no Apple Developer ID until Poncelet is stable and
+  mature. macOS and Windows remain **essential targets**, delivered later.
+- **Keep the platform layer portable from day one:** no Linux-only APIs outside `pc-platform`, and only
+  cross-platform C dependencies (SDL3, FreeType, HarfBuzz, Jolt). OS-specific code is isolated in
+  `pc-platform/<os>/` bodies selected by gprbuild scenario.
+- **CI on free GitHub Actions runners:** Linux builds and full tests. **Windows (`windows-latest`) and macOS
+  (`macos-latest`, arm64) compile and smoke-test only** (build, run headless core tests, start the runtime with a
+  null/offscreen window if possible). There is no signing, notarisation, or packaging for distribution. A red
+  Windows/macOS build blocks merging, just like Linux.
+- **Steamworks stays behind a compile-time stub** (`STEAM=stub`, the default) until the late Steam milestone.
+  Nothing from the Steamworks SDK is needed to build.
+
 ### 10.1 Toolchain
 - **Alire** manages GNAT toolchains per OS (`gnat_native` for Linux x86-64, Windows x86-64 (MinGW), and
-  macOS arm64/x86-64) plus `gprbuild`. Robert's local GNAT 12.3 + gprbuild works for Linux development.
+  macOS arm64/x86-64) plus `gprbuild`. Robert's local GNAT 12.3 + gprbuild on Linux Mint is the reference development toolchain. CI uses Alire for Windows/macOS.
   Pin the toolchain version in `alire.toml`.
 - Project files: `pc_core.gpr` (library, no deps), `pc_platform.gpr`, `pc_runtime.gpr`, `pc_editor.gpr`,
   and a per-game `game.gpr`. Scenario variables: `BUILD=debug|release|prove`, `TARGET_OS`.
 - C dependencies are built with CMake or downloaded as prebuilt SDKs in CI and linked via gprbuild
   `Linker_Options`.
 
-### 10.2 Per-OS packaging
+### 10.2 Per-OS packaging (target state; signing and Steam parts deferred to milestone M7, see §15)
 
 | OS | Build host | Output | Steam specifics |
 |---|---|---|---|
@@ -386,11 +401,14 @@ These rules apply to everything in `pc-core` and are recommended in game code.
   checkboxes are interface/subtitles only unless voice is added.
 
 ### 10.3 Steamworks integration
-- Bind the **flat C API** (`steam_api_flat.h`) with a thin Ada binding in `pc-platform`, then build
-  `Pc.Services.Steam` on top. It degrades gracefully: with no Steam, all calls are no-ops, so the same build
+- **Now:** `Pc.Services.Steam` is defined as an Ada spec with contracts. The only body built by default is a
+  **compile-time stub** (gprbuild scenario `STEAM=stub`): every call is a no-op, language comes from the OS locale,
+  and achievements are logged locally. Game and editor code call the service as if Steam existed.
+- **Later (M7, after maturity and a partner account):** add a `STEAM=real` body that binds the **flat C API**
+  (`steam_api_flat.h`) with a thin Ada binding in `pc-platform`. No game code changes. It degrades gracefully: with no Steam, all calls are no-ops, so the same build
   runs from itch.io or for development.
-- Features by milestone: init/restart-check, overlay, language, achievements, stats (M4), Cloud saves,
-  rich presence (M5), workshop for template and mod sharing (later).
+- Features by milestone: init/restart-check, overlay, language, achievements, stats, Cloud saves,
+  rich presence (all in M7), workshop for template and mod sharing (later).
 
 ## 11. Editor strategy: the editor is the first product
 
@@ -518,19 +536,22 @@ poncelet/                     (public, source-available — see LICENSE)
 | **M1** | Pixels + formats | SDL3 binding, window/input, SDL_GPU render core + render graph, 2D batcher, fixed-step loop, shader pipeline. **`.pscene` and `.ponpack` formats specified** | A sprite moves at 60 Hz on all three OSes; format specs reviewed |
 | **M2** | World, UI, i18n | ECS World with 2D/3D transforms, scenes, FreeType/HarfBuzz text, **seven-language i18n** + pseudo-locale, runtime/editor UI toolkit (docking, inspector widgets), GNATprove flow in CI | Editor shell (project manager + empty scene) switches live between seven languages |
 | **M3** | 2D complete | Physics2D (own Ada), 2D lights/shadows, tilemaps, particles, animation, audio, save/load, input rebinding; editor 2D viewport, inspector, asset import, localisation editor, play-in-editor | A 2D template game built entirely in the editor |
-| **M4** | Export + Steam | Exporter (Win/macOS/Linux) with `.ppak`, signed/notarised macOS, Steam Runtime Linux; Steamworks binding for users' games; template-pack import; editor on a private Steam branch | Export a template game to all three OSes; editor installable from Steam (private) |
+| **M4** | Export (unsigned) | Exporter with `.ppak`; Linux export tested on Linux Mint; Windows/macOS exports **built in CI** (unsigned, smoke-tested only); `Pc.Services.Steam` stub; template-pack import | Exported template game runs on Linux Mint; Windows/macOS CI artifacts build and pass smoke tests |
 | **M5** | 3D foundation | Clustered forward+ renderer, PBR, glTF import, cameras, directional/omni/spot lights, cascaded shadows, IBL/sky; Jolt 3D physics behind Ada API; 3D viewport and gizmos | A 3D template scene imported from glTF, lit, with physics, editable in the editor |
 | **M6** | 3D complete | Skeletal animation + blend trees, lightmap baker, reflection probes, SSAO/SSR/post FX, LODs and culling, navmesh, material editor, particles 3D | 3D template game playable and exportable |
-| **M7** | Product polish (**first sellable**) | Onboarding, tutorials, undo everywhere, crash recovery, editor localisation QA by native speakers, template packs (contents from the group chat) finalised and signed, EULA, store page in seven languages, documentation | Steam review passed; **Poncelet Editor + template packs released** (3D can ship as "early access" if M6 slips) |
-| M8+ | Growth | Own Ada 3D physics backend, SPARK proofs of core packages, dynamic GI, Workshop for packs, paid template DLC, visual material graph, optional WASM experiment | — |
+| **M7** | Maturity + product polish | Onboarding, tutorials, undo everywhere, crash recovery, stability/soak testing, editor localisation QA by native speakers, template packs (contents from the group chat) finalised and signed, EULA, documentation | Maturity gate: no known crashers, stable formats, 3D at least early-access quality |
+| **M8** | Platforms + Steam (**first sellable**, gated on M7) | Only after the maturity gate: Steamworks partner sign-up, real Steamworks body, Apple Developer ID, macOS code signing + notarisation, Windows signing (optional), Steam Runtime Linux build, **real-hardware testing on macOS and Windows** (borrowed or rented machines / testers), SteamPipe depots, store page in seven languages | Steam review passed; **Poncelet Editor + template packs released** |
+| M9+ | Growth | Own Ada 3D physics backend, SPARK proofs of core packages, dynamic GI, Workshop for packs, paid template DLC, visual material graph, optional WASM experiment | — |
 
 ## 16. Risks
 - **Small Ada game-dev ecosystem:** we own our bindings. Mitigation: keep the C surface tiny and generate bindings.
-- **macOS toolchain** (Apple Silicon GNAT, notarisation): validate in M0, not M4.
+- **macOS/Windows without local hardware:** compile and smoke-test in CI from M0 so portability never rots.
+  Real-hardware testing and notarisation come in M8. Risk: GPU or driver issues found late, so keep shaders and
+  SDL_GPU usage conservative and test early with community testers if possible.
 - **CJK text quality** (line breaking, IME, font size): handle in M2 with a native-speaker review.
 - **Determinism with floats across OSes:** use fixed point where it matters, and avoid `-ffast-math`.
 - **Scope (Godot-level 2D + 3D + polished editor):** this is the largest risk. Mitigations: SDL_GPU + Jolt + cgltf
-  instead of writing our own; ship 2D first; allow 3D as early access at M7; cut dynamic GI and node-graph
+  instead of writing our own; ship 2D first; allow 3D as early access at M8; cut dynamic GI and node-graph
   editors to post-v1.
 - **Bundling GNAT with a commercial editor:** use the FSF GCC toolchain under the GCC Runtime Library Exception
   and confirm redistribution terms (GPLv3 for compiler binaries means source offer obligations for the toolchain itself).
@@ -546,8 +567,9 @@ poncelet/                     (public, source-available — see LICENSE)
    sell their games royalty-free, the runtime may be redistributed inside exported games, and engine/editor source
    may not be redistributed (§14).
 4. ~~Final name~~ **Answered:** Poncelet.
-5. **macOS distribution:** are you willing to get an Apple Developer ID (signing and notarisation) and access
-   to a Mac or CI macOS runners for testing?
+5. ~~macOS distribution / Apple Developer ID~~ **Answered (2026-11-19): deferred.** No sign-ups (Apple or Steam)
+   until Poncelet is stable and mature. Development is on Linux Mint, and macOS/Windows are compile and smoke-checked in CI.
+   Signing, notarisation, and Steam come in M8.
 6. Spanish: Spain (`spanish`) or Latin American (`latam`), or both?
 7. Should CI (GitHub Actions on all three OSes) run in the public repo, or in a private mirror (to keep build
    details and secrets separate)?
