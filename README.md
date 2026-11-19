@@ -14,6 +14,8 @@ The goal is to match Godot's capability in **2D and 3D**.
 - **2D and 3D from the start:** a batched 2D renderer and a clustered forward+ PBR 3D renderer, glTF import, our own Ada
   2D physics, and Jolt-backed 3D physics behind an Ada API. 2D ships first, then 3D on the same architecture.
 - **The editor is the first product:** sold on Steam as software, localised in all seven languages, bundled with template packs.
+- **AI-tool friendly (core feature):** text formats with JSON Schemas, a headless `poncelet` CLI with JSON output,
+  and a built-in local MCP server, so users drive it with their own AI tools. No bundled AI model and no stored AI keys.
 - **Template packs** (`.ponpack`): existing games folded in as starter templates for new projects.
 - **UI languages (7):** English, German, French, Russian, Simplified Chinese, Spanish, Italian.
   Identifiers are English internally, and all user-visible text goes through string IDs.

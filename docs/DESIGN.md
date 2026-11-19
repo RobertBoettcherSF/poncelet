@@ -1,7 +1,7 @@
-# Poncelet Engine — Design Document (Draft 0.3)
+# Poncelet Engine — Design Document (Draft 0.4)
 
 > Name: **Poncelet** (chosen 2026-11-19, after Jean-Victor Poncelet, projective geometry; see `docs/NAME_CHECK.md`).
-> Author: Robert Boettcher, with Grok Bot. Status: draft 0.3, 2026-11-19 (full 2D + 3D; editor is the first Steam product; Linux-first development, Steam/Apple deferred).
+> Author: Robert Boettcher, with Grok Bot. Status: draft 0.4, 2026-11-19 (full 2D + 3D; editor is the first Steam product; Linux-first development, Steam/Apple deferred; AI-tool support is a core feature).
 > Clean-room: Godot (MIT) was studied **for architecture only**. No Godot code, text, or assets are copied here.
 > Everything below describes our own design.
 
@@ -24,8 +24,10 @@ What makes it different:
 3. **Editor as product.** The editor is first-class, with polished UX and a UI localised in all seven languages.
    It isn't a developer-only tool.
 4. **Templates.** Robert's existing games (built with other bots) become template packs a user can pick,
-   using a pack format defined early (§12).
-5. **Localisation is built in, not bolted on.** All user-visible text goes through string IDs from day one.
+   using a pack format defined early (§13).
+5. **AI-tool friendly by design.** Users drive Poncelet with their *own* AI tools (Cursor, Claude, ChatGPT, Grok,
+   Copilot, ...) through text formats, a JSON CLI, and a built-in MCP server. Poncelet bundles no model and stores no AI keys (§12).
+6. **Localisation is built in, not bolted on.** All user-visible text goes through string IDs from day one.
 
 ## 2. Scope and non-goals
 
@@ -34,7 +36,7 @@ What makes it different:
 - **Full 2D and full 3D, designed together from the start** (target: feature parity with Godot for typical indie
   games). 2D: sprites, tilemaps, 2D lights/shadows, particles, 2D physics. 3D: PBR, glTF import, lights and shadows,
   3D physics, skeletal animation, navigation. One architecture, one scene format, one editor.
-  **Delivery order:** 2D ships first, then 3D lands on the same architecture (§15). Nothing in the 2D work may
+  **Delivery order:** 2D ships first, then 3D lands on the same architecture (§16). Nothing in the 2D work may
   assume 2D-only.
 - UI languages: **English (source), German, French, Russian, Simplified Chinese, Spanish, Italian**, for both
   the editor and games.
@@ -50,7 +52,7 @@ What makes it different:
 - A general-purpose scripting VM such as a GDScript equivalent. Game logic is Ada, compiled in (see §6.6).
 - Matching every niche Godot feature (XR, mobile, web export, C#). We match Godot's **core 2D/3D capability
   for desktop games** and differ through correctness, Ada, and a curated template-first workflow.
-- Open-source distribution. The repository is public but **source-available, all rights reserved** (§14).
+- Open-source distribution. The repository is public but **source-available, all rights reserved** (§15).
 
 ## 3. What we learned from Godot (adopt / adapt / avoid)
 
@@ -66,7 +68,7 @@ shaping, codecs), `editor/` (built on the engine's own GUI), and `main/` (boot, 
 | `core/` with no dependency on scene or rendering | **Adopt** | `pc-core` has zero platform dependencies and can be checked in SPARK mode. |
 | **Scene tree** of polymorphic 2D and 3D nodes (deep inheritance, signals, virtual callbacks) | **Adapt** | Pointer-heavy, dynamic-dispatch trees are hard to prove. We keep the **authoring idea** (nested scenes, instancing, a hierarchy in the editor) but the runtime stores data in an **ECS-style World**: entities are handles, components live in bounded tables, and hierarchy is a `Parent` component. |
 | Variant/dynamic object model with reflection | **Avoid** at runtime / **Adapt** for tools | Runtime is statically typed. Reflection for the editor and serialisation comes from **generated** Ada (a code generator emits component descriptors), not from runtime introspection. |
-| **Resources**: reference-counted assets with a text format for scenes and resources, plus a binary format for export | **Adopt** | Text formats for source control (`.pscene`, `.pres`, TOML-like or JSON), and an exporter compiles them to binary packs with checksums. Assets are referenced by stable UUIDs, not paths. |
+| **Resources**: reference-counted assets with a text format for scenes and resources, plus a binary format for export | **Adopt** | Documented, deterministic text formats with published JSON Schemas (`.pscene`, `.pres`, `.pimport`; §12.1), and an exporter compiles them to binary packs with checksums. Assets are referenced by stable UUIDs, not paths. |
 | **RenderingDevice** abstraction over Vulkan/D3D12/Metal, plus a GL compatibility renderer | **Adapt** | We don't write our own RHI. We use **SDL3 GPU**, which already abstracts Vulkan, Metal, and D3D12 (§6.2). |
 | **TextServer** with complex shaping (HarfBuzz, ICU, FreeType) and a fallback | **Adopt** | FreeType + HarfBuzz via C bindings. Our seven languages need no RTL, but CJK line breaking and font fallback are required. |
 | **Translation domains**, CSV/gettext catalogs, plural rules, locale fallback | **Adopt** | §8. |
@@ -81,6 +83,8 @@ shaping, codecs), `editor/` (built on the engine's own GUI), and `main/` (boot, 
 ## 4. Architecture overview
 
 ```
++---------------------------------------------------------------+
+| Tools: Editor (GUI) | `poncelet` CLI (JSON) | MCP server       |   all share one Ada tools API
 +---------------------------------------------------------------+
 | Game (Ada)  — per-game packages; templates live here           |
 +---------------------------------------------------------------+
@@ -240,7 +244,9 @@ navmesh polygons, a SPARK candidate). Avoidance (RVO) later.
 - Hot reload: data assets reload live. Code changes need a rebuild (fast with gprbuild incremental builds).
 
 ### 6.7 Serialisation and saves (`Pc.Serial`)
-- Text: a deterministic, diff-friendly format for scenes and resources (stable key order, UUIDs).
+- Text: **canonical JSON** for scenes, resources, and import settings (UTF-8, LF, two-space indent, fixed key order,
+  one entity per block, stable UUIDs, no floats in exponent form, trailing newline). Byte-identical output for
+  identical data, so diffs are minimal and reviewable. See §12.1.
 - Binary: versioned little-endian records with a header (magic, format version, CRC32/xxHash).
   Explicit `Read`/`Write` procedures, with no `'Read`/`'Write` streams on access types.
 - Save games: versioned, with migration functions `Migrate_Vn_To_Vn1` that have contracts. Saves go to Steam Cloud.
@@ -387,7 +393,7 @@ These rules apply to everything in `pc-core` and are recommended in game code.
 - C dependencies are built with CMake or downloaded as prebuilt SDKs in CI and linked via gprbuild
   `Linker_Options`.
 
-### 10.2 Per-OS packaging (target state; signing and Steam parts deferred to milestone M7, see §15)
+### 10.2 Per-OS packaging (target state; signing and Steam parts deferred to milestone M8, see §16)
 
 | OS | Build host | Output | Steam specifics |
 |---|---|---|---|
@@ -453,12 +459,95 @@ Recommendation: **not in v1.** For githack, publish **static HTML pages** (desig
 short videos, an interactive localisation report). Revisit a WASM build of `pc-core` with a JS renderer as an
 experiment after M4. `pc-core` being platform-free makes this possible later.
 
-## 12. Template system and template pack format (defined early, from M1)
+## 12. AI-tool integration (core feature)
+
+**Principle:** people will mostly drive Poncelet with **their own AI subscriptions** (Cursor, Claude, ChatGPT, Grok,
+GitHub Copilot, and others). Poncelet makes itself maximally legible and controllable for those tools.
+**Poncelet pays for no AI, bundles no AI model, and never stores AI API keys.** The editor, CLI, and MCP server are
+one Ada **tools API** (`Pc.Tools`) exposed three ways, so the GUI, scripts, and agents can all do the same things.
+
+### 12.1 Text-first project data with published schemas
+- Every piece of project data is a documented, deterministic text file:
+
+| Data | File | Format |
+|---|---|---|
+| Scenes (2D/3D) | `*.pscene` | canonical JSON |
+| Resources (materials, physics shapes, animations, themes, tilesets) | `*.pres` | canonical JSON |
+| Import settings per asset | `<asset>.pimport` | canonical JSON |
+| Project settings, input map | `project.toml` | TOML (stable key order) |
+| Templates / template packs | `template.toml`, `pack.toml` | TOML |
+| Localisation catalogs | `locale/*.csv` (+ `.po` export) | UTF-8 CSV |
+| Data-driven logic (state machines, dialogue, loot tables) | `*.pdata` | canonical JSON |
+
+- **JSON Schema (2020-12)** for every format, versioned and published in `schemas/` (also served by the CLI and MCP).
+  Each file carries `"$schema"` and `"format_version"`. Migrations are explicit and covered by tests.
+- **Canonical writer:** the editor, CLI, and MCP always re-serialise canonically, so an AI's hand edit and an editor
+  edit produce the same bytes. `poncelet fmt` normalises files, and `poncelet validate` checks schemas and references.
+- Binary data (textures, meshes, audio) stays as source files (PNG, glTF, OGG). Derived caches live in `.poncelet/cache/`
+  (git-ignored).
+
+### 12.2 Headless CLI `poncelet` (from M0/M1)
+- Commands: `new` (from template), `build`, `run`, `test`, `export`, `screenshot` (render a scene/camera to PNG
+  headlessly or offscreen), `validate`, `inspect` (scene tree, entity, component, resource, settings), `fmt`,
+  `docs` (API lookup), `schema`, `mcp` (start the MCP server).
+- **Machine-readable output:** `--json` gives one JSON object (or NDJSON for streams) with a stable, versioned
+  envelope `{ "ok", "command", "version", "result", "diagnostics": [...] }`. Exit codes are documented.
+- **Precise diagnostics:** every error has `file`, `line`, `column`, `end_line`/`end_column`, `code` (e.g.
+  `PC-SCENE-0042`), `severity`, `message` (English, plus a localised `message_l10n`), and a `hint`. GNAT compiler and
+  contract-failure messages are parsed into the same structure.
+- Deterministic: the same inputs give the same outputs (fixed seeds for `test`/`screenshot`) so agents can compare runs.
+
+### 12.3 Built-in MCP server (with the editor shell, M2)
+- Implements the **Model Context Protocol** in Ada, in **both the editor and headless mode** (`poncelet mcp`).
+  Transports: **stdio** (for desktop AI clients and IDEs) and **local HTTP** (Streamable HTTP, bound to `127.0.0.1`).
+- **Tools** (initial set):
+  - Query: `scene_tree`, `get_entity`, `list_components`, `get_component`, `find_entities` (by name, type, or tag),
+    `get_resource`, `project_settings`, `list_assets`.
+  - Modify: `create_entity`, `delete_entity`, `set_component`, `add_component`, `remove_component`,
+    `instantiate_scene`, `save_scene`, `set_translation` (catalog entry).
+  - Run: `play` / `stop` play-in-editor, `step_frames`, `send_input` (scripted input), `capture_screenshot`,
+    `capture_frames` (short sequence), `read_logs`, `run_tests`, `build` (returns structured diagnostics).
+  - Knowledge: `api_docs` (search the generated Ada API reference including contracts), `schema`, `examples`.
+- **Resources:** project files, schemas, logs, and docs exposed as MCP resources. **Prompts:** curated task prompts
+  (e.g. "add a component", "localise a scene").
+- **Safe by default:**
+  - Local only (stdio or loopback HTTP with a per-session random token). No remote binding unless the user
+    explicitly enables it in settings.
+  - **Project-scoped:** file access is limited to the open project directory. Nothing outside it, and no arbitrary
+    shell execution. `build`/`run_tests` invoke only the project's own build.
+  - **User confirmation in the editor for destructive operations** (delete entities or files, overwrite scenes,
+    export, mass edits above a threshold). Headless mode requires an explicit `--allow-destructive` flag.
+  - **Undo integration:** every MCP change is a normal editor command, grouped per tool call, labelled
+    "AI: <tool>" in the undo history and fully reversible. There's an activity log panel of all agent actions.
+  - Read-only mode switch, and rate limits.
+
+### 12.4 AI-oriented documentation
+- Every template and new project ships **`AGENTS.md`** (how to build, test, run, the conventions, where things are,
+  "do and don't") and **`llms.txt`** (an index of the docs most relevant to the project) at the project root.
+- **API reference generated from the Ada specs** (`.ads`) by our doc tool: signatures, `Pre`/`Post`/`Type_Invariant`
+  contracts, ranged subtypes, and doc comments. Output as Markdown + JSON (for `api_docs` / `poncelet docs`), versioned
+  per engine release.
+- Examples: small, compiling, tested snippets per component and system, extracted from the test suite so they never rot.
+- The engine repository itself also has an `AGENTS.md` for contributors' AI tools.
+
+### 12.5 Ada contracts as the feedback loop for AI-written code
+- Game code is Ada, so the compiler and contracts give AI tools fast, precise feedback. Type errors, range
+  violations, and contract failures arrive as structured diagnostics with locations (§12.2).
+- Debug builds run with all assertions on. Contract failures during `run`/`test`/`play` are reported with the
+  failing contract, the actual values, and the source location.
+- Optional GNATprove flow analysis via `poncelet build --prove` for packages marked `SPARK_Mode`.
+- Templates include a test harness (scripted input + golden screenshots) so agents can verify behaviour, not just compilation.
+
+### 12.6 What Poncelet does not do
+- No bundled AI model, no AI API calls, no AI accounts, **no storage of AI keys**, and no telemetry of AI usage.
+  The user's AI client connects to Poncelet, never the other way round.
+
+## 13. Template system and template pack format (defined early, from M1)
 
 The editor ships with **template packs**. Their contents (which of Robert's games) will be decided later in a group
 chat with his other game bots. The **format and import mechanism are defined now** so that work can start in parallel.
 
-### 12.1 Template pack (`.ponpack`)
+### 13.1 Template pack (`.ponpack`)
 - A zip container with `pack.toml` at its root (id, version, `engine_min`, localised name and description IDs,
   thumbnail, list of templates, author, licence terms for the pack contents, content hash).
 - Contains one or more **templates** (below), shared assets, and per-language catalogs for its own strings.
@@ -467,7 +556,7 @@ chat with his other game bots. The **format and import mechanism are defined now
 - Distribution: bundled in the editor depot, as Steam DLC (paid packs), or via Steam Workshop (later).
 - Versioned with migration: the editor can upgrade templates from older `engine_min` versions with scripted migrations.
 
-### 12.2 Templates
+### 13.2 Templates
 
 - A **template** is a project directory plus a manifest `template.toml`:
   ```toml
@@ -498,7 +587,7 @@ chat with his other game bots. The **format and import mechanism are defined now
   engine changes don't break templates.
 - Templates can later be distributed as Steam Workshop items or DLC.
 
-## 13. Repository layout (planned; nothing created yet)
+## 14. Repository layout (planned; nothing created yet)
 
 ```
 poncelet/                     (public, source-available — see LICENSE)
@@ -508,14 +597,18 @@ poncelet/                     (public, source-available — see LICENSE)
   services/    render2d/ audio/ input/ text/ window/ steam/
   runtime/     main entry, loop
   editor/      imgui-based dev editor
-  tools/       catalog compiler, asset packer, string-id generator, template tool
+  tools/       catalog compiler, asset packer, string-id generator, template tool, API doc generator
+  cli/         `poncelet` headless CLI (JSON output)
+  mcp/         MCP server (stdio + local HTTP), shares Pc.Tools with the editor
+  schemas/     JSON Schemas for all project file formats (versioned)
+  AGENTS.md  llms.txt   (AI-tool guidance for the engine repo)
   templates/   <one dir per template>
   locale/      engine UI catalogs (en de fr ru zh_Hans es it)
   docs/        DESIGN.md, NAME_CHECK.md, html pages for githack
   ci/          GitHub Actions workflows per OS
 ```
 
-## 14. Licensing posture (summary)
+## 15. Licensing posture (summary)
 - The repository is **public** for githack links, with **all rights reserved / source-available, no reuse**.
   See `LICENSE`.
 - Third-party notices (`THIRD_PARTY_NOTICES.md`) list SDL3, FreeType, HarfBuzz, Noto, Jolt, and others.
@@ -526,15 +619,15 @@ poncelet/                     (public, source-available — see LICENSE)
   The repository's all-rights-reserved LICENSE covers the source. The EULA covers the product.
 - Keep the Steamworks SDK, signing keys, and Steam build credentials out of the repo (CI secrets only).
 
-## 15. Milestones (target: sellable editor + template packs on Steam)
+## 16. Milestones (target: sellable editor + template packs on Steam)
 
 2D ships first, then 3D on the same architecture. The editor grows from M2 onward, not at the end.
 
 | M | Name | Contents | Exit criterion |
 |---|---|---|---|
-| **M0** | Skeleton | Repo, Alire/gprbuild projects, `pc-core` (Math 2D+3D, contracts, tests), CI on all three OSes, coding rules, LICENSE | `alr build` + tests green on Linux, Windows, and macOS |
-| **M1** | Pixels + formats | SDL3 binding, window/input, SDL_GPU render core + render graph, 2D batcher, fixed-step loop, shader pipeline. **`.pscene` and `.ponpack` formats specified** | A sprite moves at 60 Hz on all three OSes; format specs reviewed |
-| **M2** | World, UI, i18n | ECS World with 2D/3D transforms, scenes, FreeType/HarfBuzz text, **seven-language i18n** + pseudo-locale, runtime/editor UI toolkit (docking, inspector widgets), GNATprove flow in CI | Editor shell (project manager + empty scene) switches live between seven languages |
+| **M0** | Skeleton + CLI | Repo, Alire/gprbuild projects, `pc-core` (Math 2D+3D, contracts, tests), CI on all three OSes, coding rules, LICENSE, `AGENTS.md`. **`poncelet` CLI v0:** `new`, `build`, `test`, `validate` with the JSON envelope + structured GNAT diagnostics | `alr build` + tests green on Linux, Windows, and macOS; `poncelet build --json` reports file/line/column |
+| **M1** | Pixels + formats | SDL3 binding, window/input, SDL_GPU render core + render graph, 2D batcher, fixed-step loop, shader pipeline. **All text formats + JSON Schemas specified** (`.pscene`, `.pres`, `.pimport`, `.ponpack`), canonical writer; CLI adds `run`, `screenshot`, `inspect`, `fmt`, `schema` | A sprite moves at 60 Hz; `poncelet screenshot` renders headlessly on Linux; format specs reviewed |
+| **M2** | World, UI, i18n | ECS World with 2D/3D transforms, scenes, FreeType/HarfBuzz text, **seven-language i18n** + pseudo-locale, runtime/editor UI toolkit (docking, inspector widgets), GNATprove flow in CI. **MCP server v1** (stdio + local HTTP) in editor and headless mode: query/modify/play/screenshot/logs/tests tools, undo integration, confirmations; generated API docs (`api_docs`) | Editor shell switches live between seven languages; an external AI client creates an entity via MCP, and it is undoable in the editor |
 | **M3** | 2D complete | Physics2D (own Ada), 2D lights/shadows, tilemaps, particles, animation, audio, save/load, input rebinding; editor 2D viewport, inspector, asset import, localisation editor, play-in-editor | A 2D template game built entirely in the editor |
 | **M4** | Export (unsigned) | Exporter with `.ppak`; Linux export tested on Linux Mint; Windows/macOS exports **built in CI** (unsigned, smoke-tested only); `Pc.Services.Steam` stub; template-pack import | Exported template game runs on Linux Mint; Windows/macOS CI artifacts build and pass smoke tests |
 | **M5** | 3D foundation | Clustered forward+ renderer, PBR, glTF import, cameras, directional/omni/spot lights, cascaded shadows, IBL/sky; Jolt 3D physics behind Ada API; 3D viewport and gizmos | A 3D template scene imported from glTF, lit, with physics, editable in the editor |
@@ -543,7 +636,10 @@ poncelet/                     (public, source-available — see LICENSE)
 | **M8** | Platforms + Steam (**first sellable**, gated on M7) | Only after the maturity gate: Steamworks partner sign-up, real Steamworks body, Apple Developer ID, macOS code signing + notarisation, Windows signing (optional), Steam Runtime Linux build, **real-hardware testing on macOS and Windows** (borrowed or rented machines / testers), SteamPipe depots, store page in seven languages | Steam review passed; **Poncelet Editor + template packs released** |
 | M9+ | Growth | Own Ada 3D physics backend, SPARK proofs of core packages, dynamic GI, Workshop for packs, paid template DLC, visual material graph, optional WASM experiment | — |
 
-## 16. Risks
+## 17. Risks
+- **AI tools making destructive or wrong edits:** mitigated by project scoping, confirmations, undo grouping,
+  schema validation on every write, and an activity log.
+- **MCP spec evolution:** isolate the protocol layer in `mcp/`, track spec versions, and test against several clients.
 - **Small Ada game-dev ecosystem:** we own our bindings. Mitigation: keep the C surface tiny and generate bindings.
 - **macOS/Windows without local hardware:** compile and smoke-test in CI from M0 so portability never rots.
   Real-hardware testing and notarisation come in M8. Risk: GPU or driver issues found late, so keep shaders and
@@ -557,7 +653,7 @@ poncelet/                     (public, source-available — see LICENSE)
   and confirm redistribution terms (GPLv3 for compiler binaries means source offer obligations for the toolchain itself).
 - **SDL_GPU feature ceiling for advanced 3D** (no ray tracing or mesh shaders): acceptable for v1. Revisit option C later.
 
-## 17. Open questions for Robert
+## 18. Open questions for Robert
 1. ~~2D only for v1, or is 3D needed soon?~~ **Answered (2026-11-19):** Poncelet must match Godot in 2D **and** 3D.
    Ship 2D first, then 3D on the same architecture.
 2. **What engines and languages were your other bot-built games written in** (Godot/GDScript, JS, Python, Ada)?
@@ -565,7 +661,7 @@ poncelet/                     (public, source-available — see LICENSE)
 3. ~~What do we sell first?~~ **Answered (2026-11-19):** the engine + editor as a Steam software product, bundled with
    template packs. **New, to confirm:** the end-user licence for games made with Poncelet. Proposal: users own and may
    sell their games royalty-free, the runtime may be redistributed inside exported games, and engine/editor source
-   may not be redistributed (§14).
+   may not be redistributed (§15).
 4. ~~Final name~~ **Answered:** Poncelet.
 5. ~~macOS distribution / Apple Developer ID~~ **Answered (2026-11-19): deferred.** No sign-ups (Apple or Steam)
    until Poncelet is stable and mature. Development is on Linux Mint, and macOS/Windows are compile and smoke-checked in CI.
