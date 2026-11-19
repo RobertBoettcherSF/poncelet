@@ -1,6 +1,6 @@
 # Poncelet — Implementation Plan (M0 → M8, plus M9 outlook)
 
-> Companion to `docs/DESIGN.md` (draft 0.7.1). Copyright (c) 2026 Robert Boettcher. All rights reserved.
+> Companion to `docs/DESIGN.md` (draft 0.8). Copyright (c) 2026 Robert Boettcher. All rights reserved.
 > Status: plan only. No code has been committed yet. Dated 2026-11-19.
 
 ## How to use this plan
@@ -18,6 +18,9 @@
   via partners and OpenXR post-launch (M9). Web follows the proven Ada-to-WASM setups of Robert's Roguelike Jungle
   and CDDA In ADA bots: web-safe Ada subset, numeric host ABI, AdaWebPack GNAT-LLVM (DESIGN §10.5). Hood Simulator
   and Colony4X are JavaScript games.
+- **Reference games (DESIGN Appendix B):** unzip Robert's four packages into `refs/` (gitignored, never committed). Reckoning is
+  the acceptance test for M1 (M1.11), M3 (M3.15) and M4 (M4.15); Roguelike Jungle (M5.11), Colony4X (M7.13) and Hood Simulator
+  (M7.14) are template ports that must pass seed parity against the reference.
 - **One-time system packages (from M1 onward):** building SDL3 locally needs build tools and display headers, roughly
   `sudo apt install cmake ninja-build pkg-config libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev`
   `libxss-dev libxkbcommon-dev libwayland-dev libegl1-mesa-dev libvulkan-dev libpulse-dev libasound2-dev`.
@@ -27,17 +30,17 @@
 
 | Milestone | Theme | Steps |
 |---|---|---|
-| M0 | Skeleton + CLI | 10 |
-| M1 | Pixels + formats | 10 |
+| M0 | Skeleton + CLI | 12 |
+| M1 | Pixels + formats | 11 |
 | M2 | World, UI, i18n, MCP | 10 |
-| M3 | 2D complete + hot reload | 14 |
-| M4 | Export + tooling | 12 |
-| M5 | 3D foundation + CSG | 10 |
+| M3 | 2D complete + hot reload | 15 |
+| M4 | Export + tooling | 15 |
+| M5 | 3D foundation + CSG | 11 |
 | M6 | 3D complete + video + networking base | 15 |
-| M7 | Advanced features | 12 |
+| M7 | Advanced features | 14 |
 | M8 | Beta, maturity gate, platforms + Steam | 10 |
 | M9 | Post-launch (outlook) | 6 |
-| **Total** | | **109** |
+| **Total** | | **119** |
 
 Critical path: M0 → M1 (SDL3, render core, WASM spike) → M2 (World, UI, tools API) → M3 (2D) → M5 (3D core) → M6 → M7 (GI,
 multiplayer, visual shaders) → M8. M4 (export) can run in parallel with early M5 once M3.8 is done. Networking base
@@ -119,13 +122,29 @@ Only GNAT 12.3 + gprbuild needed. No SDL3, no Alire, no sudo.
 - **Done when:** `BUILD OK` with `core.adc` active; a deliberate violation in a scratch file is rejected
 - **Depends on:** M0.8
 
-### M0.10 Numeric host ABI v0 + last-chance handler
-- **Goal:** `Pc.Host_ABI`: integer-only exported functions (`pc_init`, `pc_tick`, `pc_act`, `pc_read_stat`, `pc_event_*`, `pc_hash_*`, buffer accessors); dev builds keep all checks; last-chance handler reports file/line to the host.
-- **Packages/files:** `src/host/pc-host_abi.ads/.adb`, `src/host/pc-last_chance.adb`, `tests/host_abi_test.c` (C harness)
-- **Contracts/tests:** ABI functions total over their integer domains (contracts); a deliberate failing assertion reports exception name, file, and line
+### M0.10 Numeric host ABI v1 core + last-chance handler (from Reckoning `world.ads` and RJ `rj-lch`)
+- **Goal:** Freeze `Pc.Host_ABI` v1 as in DESIGN §10.5 decision 3: `pc_abi_version`, `pc_init (world_seed, ai_seed)`, `pc_tick (n)`, `pc_act (actor, verb, a1, a2, a3) → status`, `pc_busy`, `pc_clock`, `pc_read_stat`, `pc_read`, the event ring (`pc_event_count/read/dropped/clear`, records `{sequence, tick, code, actor, a1, a2, a3}`), `pc_hash_lo/hi`, `pc_buffer_ptr/len/cap (kind)`. Shape taken from Reckoning's `world.ads` (integer-only C exports) with state passed explicitly instead of a package global. Last-chance handler as in Roguelike Jungle's `rj-lch`, but passing file pointer + line to the import `pc_lch`.
+- **Packages/files:** `src/host/pc-host_abi.ads/.adb`, `src/core/pc-events.ads/.adb` (fixed ring, default 1024), `src/host/pc-last_chance.ads/.adb`, `tests/host_abi_test.c` (C harness), `tools/gen_exports.py` (export list from the spec, used by M1.10)
+- **Contracts/tests:** Contracts: every export total over its integer domain (out-of-range index returns 0, never raises); event ring `Post => Count <= Capacity`, overflow increments `Dropped`; a deliberate failing assertion reaches `pc_lch` with file and line; no `Unchecked_Conversion` of a record address (grep check)
 - **Verify:** `./run-tests.sh hostabi`
-- **Done when:** `PASS hostabi`: the C harness drives init/tick/hash through the ABI and gets the same hash as `poncelet run`
+- **Done when:** `PASS hostabi`: the C harness drives init/act/tick/events/hash through the ABI, gets the same hash as `poncelet run`, sees `dropped = 5` after pushing capacity+5 events, and prints `LCH pc-host_abi.adb:<line>` for the forced failure
 - **Depends on:** M0.9
+
+### M0.11 Reference packages and known-answer vectors
+- **Goal:** Make the four reference packages usable as test oracles without committing them: they are unzipped into `refs/` (gitignored). A script builds Roguelike Jungle's native `rj_sim` with your GNAT 12.3 (statically linked, see DESIGN §10.5 decision 9) and writes known-answer vectors for the later RNG/hash/parity steps.
+- **Packages/files:** `refs/README.md` (where to unzip CDDA-In-ADA.zip, roguelike-jungle.zip, Colony4X.zip, Hood-Simulator.zip), `.gitignore` entry `refs/*/`, `tools/refvectors.sh`, `tests/vectors/rj_sim_s1-5_t1440.jsonl`, `tests/vectors/mulberry32.txt`, `tests/vectors/lcg_reckoning.txt`, `tests/vectors/xorshift32s.txt`
+- **Contracts/tests:** Vectors are plain text with a header naming the source package, version and commit; the script fails loudly if a package is missing
+- **Verify:** `./tools/refvectors.sh`
+- **Done when:** Prints `rj_sim: 5 seeds OK (GNAT 12.3, static)`, `mulberry32/lcg/xorshift32*: 1000 values each`, and, if `node` is installed, `colony4x seed 7919 t40 replay hash 5fd168f5 OK`
+- **Depends on:** M0.8
+
+### M0.12 Pc.Random, Pc.Fixed and Pc.Hash (extracted from Roguelike Jungle, Reckoning and the JS references)
+- **Goal:** Deterministic maths for every target (DESIGN §6.15.1, §6.15.3): `Pc.Random` with explicit state and **named streams** derived from world/AI seed (`Derive` = SplitMix32), PCG32 default, compatibility generators `Mulberry32`, `Xorshift32_Star`, `Lcg_1664525`; integer `Below`, `Chance`, `Weighted`, `Shuffle`, `Bell`. `Pc.Fixed`: generic binary fixed-point pattern from `RJ.Fixed` (32-bit storage). `Pc.Hash`: 64-bit FNV-1a over a canonical field stream with named sub-hashes.
+- **Packages/files:** `src/core/pc-random.ads/.adb`, `pc-random-compat.ads/.adb`, `pc-fixed.ads`, `pc-hash.ads/.adb`, `tests/random_test.adb`
+- **Contracts/tests:** `pragma SPARK_Mode (On)` on all three; `Below: Pre => N > 0, Post => V < N`; no floats; streams independent (drawing from `Loot` never changes `Map`); known-answer vectors from M0.11 match bit for bit; `Below` equals JS `Math.floor (next() * N)` for N < 2**21
+- **Verify:** `./run-tests.sh random`
+- **Done when:** `PASS random`: 4 generators × 1000 vectors identical, stream-independence check passes, hash of a fixed field list equals the committed value; GNAT 12.3 build has 0 warnings
+- **Depends on:** M0.11, M0.2
 
 ## M1 — Pixels + formats
 
@@ -204,12 +223,20 @@ First step that needs SDL3. It's built locally into `third_party/` by a script, 
 - **Depends on:** M1.6, M1.8
 
 ### M1.10 WebAssembly toolchain spike (AdaWebPack GNAT-LLVM)
-- **Goal:** Build the headless core + host ABI to wasm32 with AdaWebPack GNAT-LLVM and `wasm-ld --no-entry --export-dynamic --allow-undefined --strip-all`; JS host with a Proxy for imports (default 0) reads linear memory; dev build keeps checks + last-chance handler (Roguelike Jungle style), release uses checks-off only for SPARK-proven units.
-- **Packages/files:** `tools/wasm/build.sh`, `web/host/*.js`, `web/headless.html` (single-file, base64-inlined wasm)
-- **Contracts/tests:** Same world hash as native; a forced assertion shows file:line in the browser console overlay
-- **Verify:** `./tools/wasm/build.sh && node web/run_headless.mjs tests/data/valid.pscene 600 1 2`
-- **Done when:** Hash equals native; `web/headless.html` works when opened directly from disk
-- **Depends on:** M0.10
+- **Goal:** Build the headless core + host ABI to wasm32 with AdaWebPack 24 (GNAT-LLVM): `-O2 -gnat2022 -gnatwa -gnata`, `wasm-ld --no-entry --strip-all --allow-undefined --export=<generated list> -z stack-size=1048576 --initial-memory=16777216` plus `s-memcop.o s-memmov.o s-memset.o` from `libgnat.a`. `tools/get-wasm-toolchain.sh` installs AdaWebPack, LLVM 16 libs and the GNAT 14 runtime library into `toolchain/` without sudo (Roguelike Jungle recipe, GNAT-FSF-builds tarball instead of Alire). JS host: real imports (`pc_lch`, `pc_log`, `pc_now_ms`) inside the dev Proxy that logs unknown names; runs `___elab*`; checks `pc_abi_version`.
+- **Packages/files:** `tools/get-wasm-toolchain.sh`, `tools/wasm/build.sh`, `hosts/headless/run.mjs`, `hosts/web/boot.js`, `web/headless.html` (single file, base64-inlined wasm)
+- **Contracts/tests:** Same world hash as native; **chunking test**: ticks fed as 1,7,80,3,640,33,… give the native hash; a forced assertion shows `file:line` in the console and an overlay; unknown import names are logged
+- **Verify:** `./tools/get-wasm-toolchain.sh && ./tools/wasm/build.sh && node hosts/headless/run.mjs tests/data/valid.pscene --ticks 43200 --seeds 1..5 --chunks uneven`
+- **Done when:** `PASS 5/5 native == wasm (uneven chunks)`; `web/headless.html` works when opened directly from disk
+- **Depends on:** M0.10, M0.12
+
+### M1.11 Reckoning acceptance A1: Reckoning core on the Poncelet web toolchain
+- **Goal:** First acceptance test (DESIGN §13.4). Move Reckoning v0.54's Ada sources into `templates/reckoning/` as template content and add a thin adapter that exposes them through `Pc.Host_ABI` (`w_new`→`pc_init`, `act`→`pc_act`, `ev_*`→event ring, `w_stat`→`pc_read_stat`, `auto_act`→`pc_auto_step`, save blob→`pc_buffer (Save)`). Build with checks **on** (Reckoning shipped with `-gnatp`, so latent range errors are expected and fixed in the template).
+- **Packages/files:** `templates/reckoning/src/` (world.ads/.adb, reckoning.ads/.adb), `templates/reckoning/abi/reckoning-pc_adapter.ads/.adb`, `templates/reckoning/template.toml`, `templates/reckoning/NOTES.md` (list of check failures found and fixed)
+- **Contracts/tests:** No engine package depends on the template; the adapter has no game logic; every check failure found is listed with seed, turn and fix
+- **Verify:** `./tools/wasm/build.sh templates/reckoning && node hosts/headless/run.mjs templates/reckoning --seeds 1..20 --auto 3000 --compare-native`
+- **Done when:** `PASS 20/20 native == wasm` for hash and stats 2, 3, 46, 50; no last-chance report in 20 seeds × 3000 auto steps
+- **Depends on:** M1.10
 
 ## M2 — World, UI, i18n, MCP
 
@@ -391,21 +418,29 @@ First step that needs SDL3. It's built locally into `third_party/` by a script, 
 - **Done when:** Pinch/swipe/virtual stick work with mouse emulation
 - **Depends on:** M3.7
 
-### M3.13 Pc.Random, replays, golden replay tests
-- **Goal:** Seeded RNG with sub-seeds; record and verify `.preplay` files.
-- **Packages/files:** `src/core/pc-random*`, `pc-replay*`, `tests/replays/*`
-- **Contracts/tests:** PCG32 state explicit; playback reports the first divergent frame/system
+### M3.13 Replays, saves and golden replay tests
+- **Goal:** `.preplay` per DESIGN §6.15.3 (canonical JSON header + `tick actor verb a1 a2 a3` lines + `#hash` lines), playback that names the first divergent tick and sub-hash, the two save forms (replay save = seeds + action log, as Colony4X; versioned `Pc.Serial` snapshot with magic/version/CRC in `pc_buffer (Save)`), golden replays in CI. Uses `Pc.Random`/`Pc.Hash` from M0.12.
+- **Packages/files:** `src/core/pc-replay*`, `src/core/pc-serial*` (snapshot header), `tests/replays/*`
+- **Contracts/tests:** Record → play back → identical hash; a deliberately changed rule reports the first divergent tick and sub-hash; an unknown save version is refused cleanly; log cap reported
 - **Verify:** `./bin/poncelet replay verify tests/replays/platformer_001.preplay`
 - **Done when:** `REPLAY OK` (all checkpoint hashes match); a tampered replay reports the divergent frame
 - **Depends on:** M3.8
 
-### M3.14 Autoplayer + batch sim + F9 reports
-- **Goal:** Automated players and long batch runs that write per-game reports and a summary (Robert's F9-style reports).
-- **Packages/files:** `pc-autoplay*`, `pc-report*`, `src/cli/pc-cli-sim.adb`, F9 hotkey in runtime
-- **Contracts/tests:** Report schema (JSON) + Markdown; metrics registered by the game
-- **Verify:** `./bin/poncelet sim samples/platformer --games 10 --frames 36000 --world-seed-range 1..10 --ai-seed 7 --out /tmp/reports`
-- **Done when:** 10 report files + `summary.md`; pressing F9 in a running game writes the same report format
+### M3.14 Autoplayer, `poncelet sim`, `--compare` and the `poncelet-report` v1 (F9)
+- **Goal:** Autoplayer interface with the rules of DESIGN §6.15.4 (public command API only, verb coverage counter, stuck detection after 50 calls without clock progress, `< 0` = stop, optional decision matrix and per-order trace). `poncelet sim` with world + AI seed ranges, fair lineups, parallel jobs, per-run report, CSV, batch summary, periodic report files (`BUILD` / `TEST KEY` / `SUMMARY` lines) and `--compare old new`. In-game F9 (and Debug button) writing `poncelet-report` v1 (§6.15.6): required `expected` note, replay, hashes, stats, events with `dropped`, errors, environment, stamped screenshot; JSON + Markdown.
+- **Packages/files:** `src/core/pc-autoplay.ads/.adb`, `src/cli/poncelet-sim.adb`, `src/cli/poncelet-report.ads/.adb`, `schemas/poncelet-report-1.json`, `src/runtime/pc-debug_report.adb`
+- **Contracts/tests:** Report validates against `schemas/poncelet-report-1.json`; batch summary lists errors, stuck, mean/median length, end causes and verb coverage; `--compare` of a run with itself shows all deltas 0
+- **Verify:** `./bin/poncelet sim samples/platformer --games 10 --ticks 36000 --world-seeds 1..10 --ai-seeds 1..10 --out /tmp/rep && ./bin/poncelet sim --compare /tmp/rep /tmp/rep && ./bin/poncelet validate /tmp/rep --json`
+- **Done when:** 10 reports + `summary.md` + `runs.csv` written, `--compare` prints `no change`, all reports valid; F9 in `poncelet run samples/platformer` writes JSON + Markdown with the stamp in the screenshot
 - **Depends on:** M3.13
+
+### M3.15 Reckoning acceptance A3: Reckoning batch and F9 under the engine
+- **Goal:** Run Reckoning's autoplayer through `poncelet sim` (200 seeds, profession = seed mod 5, location = (seed / 5) mod 3, scenarios default/stocked/fvs) and map its F9 data into `poncelet-report` v1. Reckoning's own `auto_run` (from `refs/`) is the oracle.
+- **Packages/files:** `templates/reckoning/sim.toml` (metrics, lineup, end-cause names), `templates/reckoning/report_map.ads/.adb`, `templates/reckoning/tests/replays/rk_seed1.preplay`
+- **Contracts/tests:** Per-seed CSV columns turns/days/cause/waves/alerts equal `refs/.../auto_run` output for seeds 1..20; batch summary shape matches `samples/batch-v020-summary.md` (runs, survival mean/median/min/max, causes, stuck, errors)
+- **Verify:** `./bin/poncelet sim templates/reckoning --games 200 --ticks 14400 --world-seeds 1..200 --out /tmp/rk && ./tools/compare_refs.sh reckoning /tmp/rk`
+- **Done when:** `stuck 0, errors 0`, `PASS 20/20 identical to auto_run`, golden replay passes in `./run-tests.sh replays`
+- **Depends on:** M3.14, M1.11
 
 ## M4 — Export + tooling
 
@@ -483,7 +518,7 @@ First step that needs SDL3. It's built locally into `third_party/` by a script, 
 
 ### M4.10 Web export (2D)
 - **Goal:** Export 2D games to WebAssembly: numeric host ABI, WebGL2 (compatibility tier), WebAudio, DOM/Gamepad input, IndexedDB saves; single-file HTML by default, multi-file with streamed `.ppak` for large games.
-- **Packages/files:** `src/platform/web/*`, `tools/export_web.sh`, `web/template/*`, `tools/publish_web.sh` (version stamp, `version.txt`, githack curl check, commit-pinned fallback URL)
+- **Packages/files:** `src/platform/web/*`, `tools/export_web.sh`, `hosts/web/*` (reference host, M4.13), `tools/inline.py` (base64 wasm + stamp into one HTML; large media stays beside it, lazy-loaded)
 - **Contracts/tests:** Replay hash identical to native; numeric event codes mapped to localised text/sound host-side or via Pc.Text
 - **Verify:** `./bin/poncelet export --target web samples/platformer /tmp/web && python3 -m http.server -d /tmp/web 8000`
 - **Done when:** Game plays at http://localhost:8000 in Firefox/Chrome; same replay hash as native
@@ -492,7 +527,7 @@ First step that needs SDL3. It's built locally into `third_party/` by a script, 
 ### M4.11 Cross-platform determinism in CI
 - **Goal:** Golden replays verified on Linux, Windows, macOS, and web.
 - **Packages/files:** `.github/workflows/replays.yml`
-- **Contracts/tests:** Fixed-point modes bit-exact; float modes within the documented tolerance
+- **Contracts/tests:** Linux/Windows/macOS native hashes identical for the golden replays; native vs. WASM identical for 20 seeds × 43 200 ticks with uneven chunks (Roguelike Jungle `determinism.sh` method)
 - **Verify:** (CI)
 - **Done when:** All platforms report identical checkpoint hashes for fixed-point replays
 - **Depends on:** M4.3, M4.10, M3.13
@@ -504,6 +539,30 @@ First step that needs SDL3. It's built locally into `third_party/` by a script, 
 - **Verify:** `./build.sh release`
 - **Done when:** Report lists suppressed units, all of them proven
 - **Depends on:** M2.10
+
+### M4.13 Reference web host (DESIGN §10.6)
+- **Goal:** The JS host every web export uses: boot + Proxy + LCH overlay; stamp `vX.YY bYYYYMMDD-HHMM <sha>[+]` above every overlay; `version.txt` update banner polling a raw origin; four audio buses (SFX, Music, Ambient, Voice) with first-tap unlock, iOS keep-alive, hidden-tab muting, `pc_audio_ctx` crossfade, newest-voice-line-wins; keys + `code` mapping, touch, pinch; in-game confirm driven by `pc_query (Danger)`; IndexedDB saves (Save buffer + replay log); F9 report.
+- **Packages/files:** `hosts/web/boot.js`, `stamp.js`, `audio.js`, `input.js`, `confirm.js`, `saves.js`, `report.js`, `hosts/web/tests/smoke.mjs`
+- **Contracts/tests:** Smoke test at 390×844 in WebKit, Firefox and Chromium: no console errors, stamp equals `version.txt`, core ticks, input moves the player, confirm overlay opens/cancels, F9 writes a valid report, modal visibility asserted
+- **Verify:** `./tools/web/smoke.sh /tmp/web/platformer.html --browsers webkit,firefox,chromium`
+- **Done when:** `PASS 3/3 browsers`; screenshot shows the stamp
+- **Depends on:** M4.10
+
+### M4.14 `poncelet publish web` with curl-verify
+- **Goal:** Publish to a gist (git clone/commit/push, binaries included) or to a `build/<version>` repository branch; then curl the raw and githack URLs for the new stamp and print the commit-pinned fallback if githack is stale. Real publishing only after your explicit go per release.
+- **Packages/files:** `src/cli/poncelet-publish.adb`, `tools/web/publish.sh`
+- **Contracts/tests:** `--dry-run` prints the exact git commands and URLs without pushing; the verify step greps for the exact stamp string
+- **Verify:** `./bin/poncelet publish web /tmp/web --target gist --dry-run`
+- **Done when:** Dry run lists clone/commit/push commands, play URL with `?v=N`, raw `version.txt` URL and the commit-pinned fallback form
+- **Depends on:** M4.13
+
+### M4.15 Reckoning acceptance A4: stamped single-HTML web export
+- **Goal:** Export Reckoning through the engine: one HTML file + `version.txt` + lazy MP3s, reference web host, Reckoning event/Look/radio/Help text moved into `Pc.Text` catalogs (English first, other six languages by M8.4).
+- **Packages/files:** `templates/reckoning/locale/*.tsv`, `templates/reckoning/assets/audio/`, `templates/reckoning/export_presets.toml`
+- **Contracts/tests:** Smoke test passes for Reckoning; save → reload → identical hash; F9 report from the browser validates
+- **Verify:** `./bin/poncelet export --target web templates/reckoning /tmp/rk-web && ./tools/web/smoke.sh /tmp/rk-web/reckoning.html`
+- **Done when:** `PASS 3/3 browsers`; you play it on your phone from a local or published URL and the stamp matches
+- **Depends on:** M4.13, M3.15
 
 ## M5 — 3D foundation + CSG
 
@@ -586,6 +645,14 @@ First step that needs SDL3. It's built locally into `third_party/` by a script, 
 - **Verify:** `./bin/poncelet-editor samples/3d`
 - **Done when:** Place, transform, and CSG-edit objects
 - **Depends on:** M5.6, M5.8, M5.9
+
+### M5.11 Roguelike Jungle template port (hash parity)
+- **Goal:** Port Roguelike Jungle v0.04 onto the engine: `RJ.Rng` → `Pc.Random` (`Xorshift32_Star` streams), `RJ.Fixed` → `Pc.Fixed`, `rj_*` exports → `Pc.Host_ABI` adapter, shell features → reference web host.
+- **Packages/files:** `templates/roguelike_jungle/` (src, abi adapter, tests/parity/)
+- **Contracts/tests:** Parity oracle = `refs/roguelike-jungle` `rj_sim`: hash, funds_raw, events, day identical for 20 seeds × 43 200 ticks, natively and in WASM
+- **Verify:** `./bin/poncelet test --parity templates/roguelike_jungle`
+- **Done when:** `PASS 20/20 identical (native) / 20/20 (wasm)`
+- **Depends on:** M4.15, M0.12
 
 ## M6 — 3D complete + video + networking base
 
@@ -807,6 +874,22 @@ First step that needs SDL3. It's built locally into `third_party/` by a script, 
 - **Done when:** Whole demo UI usable with a gamepad only
 - **Depends on:** M2.4
 
+### M7.13 Colony4X template port (seed parity)
+- **Goal:** Port Colony4X v0.9's JavaScript rules to Ada (`Mulberry32`, integer `Below`, action log saves, data-only events → event codes, `fairLineup`, `sim.js` metrics); canvas UI rebuilt with Poncelet 2D + UI.
+- **Packages/files:** `templates/colony4x/` (src, locale, tests/parity/)
+- **Contracts/tests:** Seed 7919, 40 all-AI turns: per-turn summaries and event sequence equal the reference `col-feedback` sample; 24-seed batch win types and turn statistics equal `node refs/.../sim.js` (statistical parity documented for any system where float JS cannot be matched)
+- **Verify:** `./bin/poncelet test --parity templates/colony4x`
+- **Done when:** `PASS seed 7919 trace identical`, `PASS batch 24 seeds`
+- **Depends on:** M5.11, M3.14
+
+### M7.14 Hood Simulator template port (seed parity)
+- **Goal:** Port Hood Simulator 1.2.82's `src/sim` rules to Ada (`Mulberry32`, city + Auto seeds, command API → `pc_act`, presentation events → event ring, autoplayer rules, weekly report lines); city, characters and vehicles rebuilt with Poncelet 3D, navigation (M6.6) and UI.
+- **Packages/files:** `templates/hood_simulator/` (src, scenes, tests/parity/)
+- **Contracts/tests:** City seed 1 / Auto seed 1: weekly `SUMMARY` timeline lines equal the reference run (`refs/.../summary-city1-autoseed1-won-w145.txt`) or are within the documented statistical tolerance; sim never imports renderer/UI (CI check)
+- **Verify:** `./bin/poncelet test --parity templates/hood_simulator`
+- **Done when:** `PASS timeline w1–w145` (or tolerance report), seed batch summary written
+- **Depends on:** M7.13, M6.6, M6.11
+
 ## M8 — Beta, maturity gate, platforms + Steam
 
 No sign-ups before step M8.6 (Robert's decision).
@@ -828,9 +911,9 @@ No sign-ups before step M8.6 (Robert's decision).
 - **Depends on:** M8.1
 
 ### M8.3 Template packs finalised
-- **Goal:** Contents from the group chat with Robert's game bots; signed packs.
+- **Goal:** Finalise and sign the bundled template packs: Reckoning (first pack), Roguelike Jungle, Colony4X, Hood Simulator, plus the engine demo templates; all seven languages; each with golden replays and parity tests.
 - **Packages/files:** `templates/*`, `packs/*.ponpack`
-- **Contracts/tests:** Parity tests per template
+- **Contracts/tests:** Every pack passes `poncelet test --replays --parity`; signatures verify
 - **Verify:** `./bin/poncelet validate packs/ --json`
 - **Done when:** All packs valid and signed
 - **Depends on:** M7.9

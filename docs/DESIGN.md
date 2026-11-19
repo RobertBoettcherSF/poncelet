@@ -1,7 +1,7 @@
-# Poncelet Engine — Design Document (Draft 0.7.1)
+# Poncelet Engine — Design Document (Draft 0.8)
 
 > Name: **Poncelet** (chosen 2026-11-19, after Jean-Victor Poncelet, projective geometry; see `docs/NAME_CHECK.md`).
-> Author: Robert Boettcher, with Grok Bot. Status: draft 0.7.1, 2026-11-19 (web-safe Ada subset + numeric host ABI from proven Ada-to-WASM bots; games target all platforms: desktop, web, Android, iOS, consoles via partners, XR; renderer tiers; RTL later; community asset library; multiplayer, dynamic GI, video, visual shaders and CSG moved into the first sellable release; step plan in docs/IMPLEMENTATION_PLAN.md; Godot parity audit + matrix in Appendix A; full 2D + 3D; editor is the first Steam product; Linux-first development, Steam/Apple deferred; AI-tool support is a core feature).
+> Author: Robert Boettcher, with Grok Bot. Status: draft 0.8, 2026-11-19 (reference implementations from four bot-built games folded in: concrete host ABI v1, event ring, buffers, F9 report format, web host standard, seed parity, Reckoning as first template pack and M1–M4 acceptance test, Appendix B; web-safe Ada subset + numeric host ABI from proven Ada-to-WASM bots; games target all platforms: desktop, web, Android, iOS, consoles via partners, XR; renderer tiers; RTL later; community asset library; multiplayer, dynamic GI, video, visual shaders and CSG moved into the first sellable release; step plan in docs/IMPLEMENTATION_PLAN.md; Godot parity audit + matrix in Appendix A; full 2D + 3D; editor is the first Steam product; Linux-first development, Steam/Apple deferred; AI-tool support is a core feature).
 > Clean-room: Godot (MIT) was studied **for architecture only**. No Godot code, text, or assets are copied here.
 > Everything below describes our own design.
 
@@ -389,35 +389,116 @@ Godot users expect "edit a script, see it immediately". We match that without an
   mod/DLC packs, an object/memory profiler, Tracy integration, and shell completion.
 
 ### 6.15 Seeded, replayable simulation, automated players, and batch reports
-Requested by Robert's Hood Simulator and Colony4X bots, based on their experience with long-running simulation games.
-- **Seeds:** every run has an explicit **world seed** (map and content generation, world events) and a separate
-  **AI seed** (decisions of AI-controlled actors), plus optional per-system sub-seeds derived deterministically
-  (`Derive (Seed, System_Tag)`). RNG is `Pc.Random` (PCG32/xoshiro with explicit state, a SPARK candidate). No global
-  RNG, no wall-clock time, and no unordered iteration in simulation code.
-- **Exactly replayable headless simulation:** the fixed-step simulation is a pure function of
-  (scene/save, world seed, AI seed, input stream, engine version). `poncelet run --headless --world-seed W --ai-seed A
-  --frames N` always prints the same world hash on the same platform. Cross-platform bit-exactness is a goal for
-  fixed-point game modes (§6.1) and is checked in CI on Linux/Windows/macOS.
-- **Replays:** input streams (player actions per frame) plus seeds and periodic state hashes are recorded to a
-  text-based `.preplay` file (canonical JSON header + compact per-frame action lines). Playback verifies every
-  recorded hash and reports the **first divergent frame and system** on desync.
-- **Automated players:** an `Autoplayer` interface (Ada) lets a game supply bot strategies that drive the same action
-  system as humans. Templates ship a simple autoplayer so they can be soak-tested.
-- **Batch simulation mode:** `poncelet sim <project|scene> --games 100 --frames 216000 --world-seed-range 1..100
-  --ai-seed 7 --autoplayer default --out reports/` runs many long games headless (in parallel processes) and writes:
-  - one **report file per game** (JSON + human-readable Markdown), in the spirit of Robert's **F9-style debug
-    reports**: seeds, engine and game version, duration, final and periodic stats/metrics declared by the game
-    (`Report_Metric` registrations), events timeline, warnings, contract failures with locations, performance
-    counters, and the final world hash;
-  - a **batch summary** (aggregates, distributions, outliers, failed or desynced runs with replay files attached).
-- **In-game debug report (F9):** a runtime hotkey (default F9, rebindable) and the MCP tool `debug_report` dump the
-  same report format from a live session, including seeds and a replay of the last N minutes.
-- **Replay tests:** golden replays in `tests/replays/` run in CI and through `poncelet test --replays`. Each one
-  checks the hash at checkpoints, so engine changes that break determinism or gameplay are caught immediately.
-  Templates include at least one golden replay.
-- **Milestones:** seeds and the headless hash in M0; `Pc.Random`, replay record/playback, replay tests, the
-  autoplayer interface, `poncelet sim` batch reports, and the F9 report in M3; CI cross-platform determinism
-  checks in M4; multiplayer desync detection reuses the same hashes in M7.
+First requested by Robert's Hood Simulator and Colony4X bots. Draft 0.8 makes it concrete using the four reference
+implementations (Appendix B): Reckoning (CDDA In ADA), Roguelike Jungle, Colony4X and Hood Simulator.
+
+**6.15.1 Seeds and randomness (Poncelet standard)**
+- Every run has an explicit **world seed** (map, content, world events) and a separate **AI seed** (decisions of
+  AI-controlled actors and of the autoplayer). Hood Simulator showed why both are needed: wins on the default map hid
+  a stall that only a new map exposed, so a batch varies **both**.
+- `Pc.Random` keeps **explicit state** (never a package global; Reckoning's global `S.Seed` is the counter-example)
+  and offers **named streams** derived from the two seeds (Roguelike Jungle pattern: `Map`, `Loot`, `Combat`,
+  `Weather`, `Align`, …). A game declares its streams as an enumeration. Streams are seeded with
+  `Derive (Seed, Stream_Tag)` (SplitMix32 finaliser), so adding a draw in one system never shifts another.
+- **Default generator for new games: PCG32** (64-bit state, 32-bit output). **Compatibility generators**, bit-exact
+  with the reference games, exist only for seed-parity ports: `Mulberry32` (Colony4X, Hood Simulator),
+  `Xorshift32_Star` (Roguelike Jungle) and `Lcg_1664525` (Reckoning: `V := V * 1664525 + 1013904223`, state `V / 2`,
+  result `(V / 65536) mod N`).
+- Integer helpers only in core: `Below (N)` = `(U64 (Next) * N) >> 32` (no modulo bias, and bit-identical to the JS
+  idiom `Math.floor (next() * N)` for N < 2**21), `Chance (P_Raw)` compares against a 32-bit threshold, and
+  `Weighted`, `Shuffle` (Fisher–Yates) and `Bell` (mean of three) follow the Hood Simulator `rng.ts` semantics in
+  integer form. Contracts: `Pre => N > 0, Post => V < N`.
+- Simulation code has no floats where results must match across targets: binary **fixed-point** types
+  (Roguelike Jungle `RJ.Fixed`: `delta 2.0**(-4)` money, `2.0**(-16)` probability, 32-bit storage) are the pattern
+  for `Pc.Fixed` game modes (§6.1). No wall-clock time, no unordered iteration, no `Math.random` equivalent.
+
+**6.15.2 Clock, commands and time cost**
+- The simulation advances only through `pc_tick (n)` and `pc_act (...)` (§10.5). A project chooses its **tick unit**:
+  a fixed frame (default 1/60 s), a game minute (Roguelike Jungle: 1 tick = 1 game minute, 1× speed = 10 ticks/s
+  of real time), or a turn (Reckoning, Colony4X). Hood Simulator's weekly turn with minute ticks inside maps to
+  "turn = N ticks".
+- **Chunking must not matter:** ticking 1+7+80+3+640+33 times must give the same hash as one call with the sum.
+  This is a CI test (Roguelike Jungle `determinism.sh` feeds WASM uneven chunks against a native run).
+- **One command entry point** for the human, NPCs, rival AIs and the autoplayer. Every command has a **time cost**.
+  While an actor is busy, its commands are rejected with `Busy`. A **failed or blocked command still costs time**
+  where the player's attempt would (Reckoning spends a turn on a failed try; a bump costs 2–3 extra turns).
+  The result is a numeric status (Roguelike Jungle `Result` enum; Hood Simulator `ok/fail` with a reason id), never
+  text.
+
+**6.15.3 State hash, saves and replays**
+- `Pc.Hash`: 64-bit FNV-1a over a **canonical serialisation** of the deterministic state (fixed field order,
+  little-endian), exported as `pc_hash_lo/hi`. Games add fields through `Hash_Field` registrations. Roguelike
+  Jungle's per-subsystem hashes (`Map_Hash`, `Region_Hash`) become **sub-hashes** so desync reports name the system.
+- **Two save forms:** (a) the **replay save** = seeds + engine/game version + action log (Colony4X: "saves are
+  logs", `replay (log, upto_turn)`); (b) the **snapshot save** = a versioned `Pc.Serial` blob with magic, format
+  version and CRC32, written into a dedicated host buffer (`pc_buffer_ptr/len (Save)`), never a raw record address.
+  A loader that sees an unknown version refuses cleanly (Reckoning `w_valid`; Colony4X ignores older autosaves).
+- `.preplay` = canonical JSON header (`schema`, stamp, seeds, test key, tick unit) + one line per command
+  `tick actor verb a1 a2 a3` + periodic `#hash tick lo hi` lines. Playback verifies every hash and reports the
+  **first divergent tick and sub-hash**. In-memory replay logs are capped (Reckoning: 50 000 inputs) and the cap is
+  reported, not silent.
+
+**6.15.4 Automated players (rules distilled from 80+ Hood Simulator versions and Reckoning)**
+1. The autoplayer **is a player**: it uses only the public command API and only information a human could know.
+   Report-only data is never read by the AI. Rival AIs reuse the same module.
+2. **Coverage:** every player action must be reachable by the autoplayer (launch, craft, confirm a dangerous move,
+   fly home, …), or batches never find the bug. A coverage counter per verb is part of every batch summary.
+3. **One currency:** decisions compare a single fitness value (toward the chosen goal minus costs, per actor-hour).
+4. **Estimates use the same path code as the simulation** (straight-line estimates were 2× off on roads).
+5. Every "set aside" rule has a way back **the AI can observe** (a target parked "until seen elsewhere" stalled one
+   game for 77 weeks).
+6. **Stuck detection:** if the clock does not advance for 50 autoplayer calls, count `stuck`, force a wait and go on
+   (Reckoning `auto_run`). `auto_step` returning `< 0` means "stop".
+7. Optional **decision matrix** per period and order type (proposed, given, held, done, ran out, value, cost terms,
+   net, approved vs. spent, top hold reason) and an optional per-order trace (travel/execute/wait minutes,
+   re-routes, end state). A fix names the matrix cell it should move and is proven only when that cell moves.
+
+**6.15.5 Batch simulation (`poncelet sim`)**
+- `poncelet sim <project> --games 200 --ticks 14400 --world-seeds 1..200 --ai-seeds 1..200 --autoplayer default
+  [--scenario stocked] --jobs 8 --out reports/` runs headless in parallel processes.
+- **Fair lineups:** batches rotate factions, start slots, professions and start locations from the seed
+  (Colony4X `fairLineup`; Reckoning `profession = seed mod 5`, `location = (seed / 5) mod 3`), or one faction
+  skews the result.
+- Output: one **game report** per run (the F9 format, §6.15.6), a CSV row per run with the declared metrics, and a
+  **batch summary** in Markdown + JSON: runs, errors, stuck, survival/length mean/median/min/max, end causes with
+  counts, win types and max win share, per-group breakdowns (faction, profession, personality), ms per tick and
+  worst AI step, verb coverage, and desynced runs with their `.preplay` attached.
+- **`poncelet sim --compare old/ new/`** prints the lean regression table used by every reference bot after a
+  change: errors, stuck, mean/median length, causes of death or win types, and metric deltas.
+- **Long runs write periodic report files** (Hood Simulator: every 52 game weeks into a user-picked folder) instead
+  of being stopped for debugging. The compact text form starts with `BUILD <stamp>` and `TEST KEY <stamp> | world
+  seed W | ai seed A | <mode> | <options>`, then `SUMMARY …` lines.
+
+**6.15.6 The Poncelet report (F9) format, `poncelet-report` v1**
+Reconciled from Reckoning's `debugReport()`, Roguelike Jungle's `rj-feedback` v1, Colony4X's `colony4x-log` and
+Hood Simulator's report files. One schema for the in-game F9 key (rebindable; also a visible Debug button on touch),
+the MCP tool `debug_report`, crash reports and batch runs.
+- **Header:** `schema {name: "poncelet-report", version: 1}`, `stamp` (§10.6), engine version, game id/version,
+  `reason` (`f9`, `crash`, `batch`, `contract`), `created_at` (UTC), seeds, `test_key`, tick/turn/day.
+- **Player note:** `expected` (required for a manual F9 report: "what did you expect?"), so a report always states
+  the bug.
+- **Reproduction:** the action log (`replay`), the state hash and sub-hashes, scenario/start options.
+- **State:** registered stats (`Report_Metric`), per-entity tables (units, creatures) as numeric fields, view or
+  camera snapshot, `turn_summaries` / timeline, end cause.
+- **Events:** the last N events with `dropped` count; host log lines with the same dropped count.
+- **Errors:** contract failures and last-chance reports (exception, file, line), console errors.
+- **Environment:** platform, user agent, screen and DPR, standalone/PWA flag, language, settings, audio state
+  (unlocked, bus volumes, context), performance (ms/tick, worst frame).
+- **Screenshot:** optional PNG with the stamp drawn in (Roguelike Jungle), so even a picture names its build.
+- **Opening F9 pauses the game.** Outputs: JSON (canonical) and Markdown (note, view, screenshot, JSON block). File
+  name `<game>-report-<version>-s<world seed>-t<tick>.json`. Delivery: share sheet where supported, else download
+  (WebKit on `file://` cannot keep writing a file, so no live file streaming there). Collection starts at launch,
+  so early errors are included.
+
+**6.15.7 Replay tests and milestones**
+- Golden replays in `tests/replays/` run in CI and through `poncelet test --replays`; each template ships at least
+  one. **Native-vs-WASM parity:** the same seeds give the same hash natively and in WASM (Roguelike Jungle: 20 seeds ×
+  43 200 ticks).
+- **Seed parity for ports** (§13.4): a port of a reference game must reproduce the reference's observable trace for
+  a fixed seed set.
+- **Milestones:** seeds and the headless hash in M0; `Pc.Random` (+ compatibility generators), `Pc.Fixed` and
+  `Pc.Hash` in M1; replay record/playback, autoplayer interface, `poncelet sim` + `--compare`, and the F9 report in
+  M3; CI cross-platform and native-vs-WASM determinism in M4; multiplayer desync detection reuses the hashes in M7.
 
 ## 7. Third-party components (all compatible with a closed, commercial product)
 
@@ -523,7 +604,9 @@ These rules apply to everything in `pc-core` and are recommended in game code.
    Prefer variant records and generics.
 8. **Every C binding sits in a package with `SPARK_Mode => Off`**, wrapped by an Ada spec whose contracts
    restate the C function's preconditions.
-9. **Deterministic RNG** (`Pc.Random`, e.g. PCG32/xoshiro) with explicit state passed in, not a global.
+9. **Deterministic RNG** (`Pc.Random`: PCG32 default, named streams, bit-exact compatibility generators for ports;
+   §6.15.1) with explicit state passed in, not a global. Array aggregates use `[...]` under `-gnat2022`, so code is
+   warning-free on GNAT 12.3 and 14.
 10. **Tooling:** compile with `-gnat2022 -gnata -gnatwa -gnatVa -gnatyy`, use AUnit or Alire-based tests, and
     run **GNATprove** in CI at `--mode=check` (flow) from M2 onward, then `--level=2` proof on the first
     candidate packages: `Pc.Math`, `Pc.Serial`, `Pc.I18n.Plural`, and `Pc.Physics.Broadphase_2D`.
@@ -621,48 +704,129 @@ platform NDAs, in the style of W4 Games. Platform SDKs never enter this public r
 - OpenXR integration post-launch (M9): PC VR via the Vulkan path, standalone Android headsets via the mobile tier,
   hand tracking, passthrough AR where the runtime supports it. WebXR follows WebGPU.
 
-### 10.5 Web-safe Ada subset and the numeric host ABI (decided 2026-11-19)
-This section reconciles the two proven Ada-to-WASM setups from Robert's bots.
-- **CDDA In ADA (Reckoning):** AdaWebPack GNAT-LLVM for `wasm32`; linked with
-  `wasm-ld --no-entry --export-dynamic --allow-undefined --strip-all`; the `.wasm` is base64-inlined into a
-  **single HTML file**. Core rules: no tasking, no Text_IO, no heap containers, no exceptions, and fixed-size
-  arrays and records. Exported C-ABI functions take **integer arguments only** (tick, act, read cell/stat, event
-  queue), and JS reads linear memory directly. Imports are satisfied by a JS `Proxy` that defaults to 0. Ada emits
-  **numeric event codes**, and JS maps them to text and sound, so strings and localisation stay out of the web core.
-  Deployment uses a version stamp + `version.txt`, a curl check of the githack URL, and a fallback to a
-  commit-pinned URL. It builds with `-gnatp` (checks off).
-- **Roguelike Jungle:** a similar toolchain, but it **keeps runtime checks** and installs a **last-chance handler**.
+### 10.5 Web-safe Ada subset and the numeric host ABI (decided 2026-11-19, made concrete in draft 0.8)
+Reconciled from the two proven Ada-to-WASM games (details and sources in Appendix B):
+- **Reckoning (CDDA In ADA) v0.54:** AdaWebPack GNAT-LLVM `wasm32`, `-gnatp -O2`,
+  `wasm-ld --no-entry --export-dynamic --allow-undefined --strip-all`, base64-inlined into one HTML file. About 45
+  integer-only exports (`w_new`, `act`, `view`, `ev_count/ev_code/ev_arg`, `w_stat`, `w_state_ptr/len`, `auto_act`,
+  …), a 256-entry numeric event queue, a raw state blob for saves, imports via a JS `Proxy` that returns 0.
+- **Roguelike Jungle v0.04:** AdaWebPack 24, `-O2 -gnat2022 -gnatwa`, **checks on**, a last-chance handler that
+  calls the import `rj_abort (line)`, an **explicit export list**, `-z stack-size=1048576
+  --initial-memory=16777216`, `memcpy/memmove/memset` linked from `libgnat.a`, a tick clock, an `Order` command with
+  a result enum, a 32-bit state hash, and a native-vs-WASM determinism test.
 
 **Poncelet decisions:**
-1. **Web-safe Ada subset for `pc-core`:** no tasking, no heap (no allocators, no heap containers), no exception
-   handlers, no Text_IO or other OS-dependent units, and fixed-size arrays and records. It's enforced by `core.adc`
-   (§9 rule 12) and matches our SPARK rules, so one subset serves web, iOS, consoles, and proofs.
-2. **Runtime checks policy:**
-   - **Debug/dev builds (all targets, including web):** all runtime checks and assertions on (`-gnata`, no `-gnatp`).
-     A **last-chance handler** reports exception name, source file, and line to the host. On the web it calls an
-     imported JS function that logs to the console and shows an overlay.
-   - **Release builds:** checks may be suppressed **only for units proven at SPARK Silver** (absence of runtime
-     errors), per unit via `pragma Suppress` in a generated configuration file. All other units keep their checks,
-     with the last-chance handler writing a crash report. No global `-gnatp`.
-3. **Numeric-only host ABI shared by all targets** (`Pc.Host_ABI`, exported C convention):
-   - Exports use integer and float scalars only: `pc_init (world_seed, ai_seed)`, `pc_tick (frames)`,
-     `pc_act (player, action, arg1, arg2)`, `pc_read_stat (id)`, `pc_event_count`, `pc_event_read (index, field)`,
-     `pc_hash_lo/hi`, and buffer accessors (`pc_buffer_ptr (kind)`, `pc_buffer_len (kind)`) for render snapshots
-     and UTF-8 text blobs that the host reads directly from linear memory.
-   - **Events are numeric codes** (event ID + integer payload). Hosts map them to text, sound, and effects. Text can
-     be resolved either host-side (JS catalog) or via `Pc.Text`, which is itself web-safe (enumeration IDs and byte
-     blobs, no heap). Strings never cross the ABI as owned pointers.
-   - Imports (time, random entropy for non-simulation use, logging, the last-chance handler) have defaults that
-     return 0, so a missing import never traps (the CDDA `Proxy` pattern).
-   - The same ABI drives the native desktop/mobile hosts, the web host, the headless CLI, and replay tests, so
-     determinism is checked identically everywhere.
-4. **Each target supplies renderer, input, audio, and saves** behind the services: SDL3 + SDL_GPU on
-   desktop/mobile; on the web, **WebGL2 first** (compatibility tier), **WebGPU when available** (mobile tier), plus
-   WebAudio, DOM/Gamepad input, and IndexedDB saves.
-5. **Web packaging and deployment:** the default export is a **single self-contained HTML file** (base64-inlined
-   wasm + JS host + data pack for small games). A multi-file export with a streamed `.ppak` covers large games.
-   Every export carries a **version stamp** and `version.txt`. The publish script curl-checks the githack URL and
-   prints a **commit-pinned fallback URL** (rawcdn.githack.com/…/<sha>/…).
+1. **Web-safe Ada subset for `pc-core`** (unchanged): no tasking, no heap, no exception handlers, no Text_IO or other
+   OS units, fixed-size arrays and records only, enforced by `core.adc` (§9 rule 12). Native runners and tools (the
+   `poncelet sim` driver, Reckoning's `auto_run`) may use Text_IO and handlers because they are not the core.
+2. **Runtime checks policy** (unchanged from 0.7.1, now with the evidence): dev builds on all targets keep checks
+   (`-gnata`, no `-gnatp`) plus the last-chance handler. Reckoning's `-gnatp` let an out-of-range index write into
+   the wrong cell and surface turns later. Release builds may suppress checks **only** for SPARK Silver units.
+3. **`Pc.Host_ABI` v1 (exported C convention, scalars only):**
+
+   | Export | Meaning | Source pattern |
+   |---|---|---|
+   | `pc_abi_version` | ABI version (host refuses a mismatch) | RJ `rj_ver_major/minor` |
+   | `pc_init (world_seed, ai_seed)` | new world | `w_new`, `rj_init` |
+   | `pc_load (kind) → status` | validate + load the bytes the host wrote into buffer `kind` | `w_valid` |
+   | `pc_tick (n)` | advance n ticks (chunk-independent) | `rj_tick` |
+   | `pc_act (actor, verb, a1, a2, a3) → status` | one command; status ≥ 0 = time cost, < 0 = result code | `act`, `rj_order` + `rj_last` |
+   | `pc_auto_step (actor) → status` | one autoplayer step; < 0 = stop | `auto_act` |
+   | `pc_busy (actor)`, `pc_clock (field)` | busy flag; tick/day/minute/turn | `rj_busy`, `rj_day` |
+   | `pc_read_stat (id)`, `pc_read (table, index, field)` | game stats and per-entity fields | `w_stat`, `unit_stat`, `mon_stat`, `rj_actor_*` |
+   | `pc_query (kind, a1, a2, a3)` | small queries: look/examine layers, danger of a move, routes | `look_l`, `danger`, `rj_find_route` |
+   | `pc_event_count`, `pc_event_read (i, field)`, `pc_event_dropped`, `pc_event_clear` | event queue (below) | `ev_*` |
+   | `pc_hash_lo/hi`, `pc_subhash (system)` | state hash | `rj_hash` |
+   | `pc_buffer_ptr (kind)`, `pc_buffer_len (kind)`, `pc_buffer_cap (kind)` | linear-memory buffers | `w_state_ptr/len` |
+   | `pc_view_set (w, h)`, `pc_view_sync` | viewport size and snapshot refresh | `set_view`, `view_sync` |
+   | `pc_audio_ctx (bus)` | context id the host maps to music/ambience | `music_ctx` |
+
+   Buffer kinds: `Save` (Pc.Serial snapshot), `Draw` (render snapshot / draw list), `Text` (UTF-8 blob, optional),
+   `Report` (numeric report block). Many tiny getters are fine for a 48×48 tile view (Roguelike Jungle); bigger
+   scenes use the `Draw` buffer. The packed cell format of the 2D tile view is `glyph (bits 0..15) | colour << 16
+   | visible << 24 | seen << 25` and a "lit" layer is `class << 16 | id` (Reckoning); 3D and sprite scenes use the
+   draw-list layout of §6.2.
+4. **Event queue:** fixed-capacity ring (default 1024) of integer records `{sequence, tick, code, actor, a1, a2, a3}`
+   with a `dropped` counter (Reckoning silently stopped at 256). It is filled during `pc_act`/`pc_tick` and drained by
+   the host after each call (`pc_event_clear`). Codes are a game enumeration registered with names, so the F9 report
+   and the editor can print them; Hood Simulator's `PresentationEvent {sequence, week, minute, kind, actorId, pos}`
+   and Colony4X's `logEv (kind, data)` fit the same record. **Strings never cross the ABI.** The host maps codes to
+   text (via `Pc.Text` catalogs, §8), SFX and voice in one place.
+5. **Imports:** the real imports are `pc_lch (file_ptr, line)` (last-chance handler; the host reads the NUL-terminated
+   file name from memory and shows exception, file and line), `pc_log (code, a1, a2)` and `pc_now_ms` (UI only, never
+   simulation). `memcpy/memmove/memset` come from the Ada runtime objects, not from the host. The `Proxy` default of 0
+   stays as a **startup guard**, and dev builds **log every unknown import name** so a typo is not hidden.
+6. **Elaboration:** if the module exports `*___elab[bs]` functions, the host calls them in order after instantiate
+   (Reckoning). Poncelet's own core avoids elaboration code where possible (`pragma Preelaborate`).
+7. **No `Unchecked_Conversion` on a record address.** Save and render data are produced into the buffers by
+   `Pc.Serial` / the draw-list writer (Reckoning's `W_State_Ptr` breaks §9 rule 6 and has no schema).
+8. **Each target supplies renderer, input, audio and saves** behind the services (SDL3 + SDL_GPU on desktop/mobile;
+   WebGL2 first and WebGPU later on the web; WebAudio; DOM/Gamepad input; IndexedDB with a localStorage fallback).
+   The web host standard is §10.6.
+9. **Build recipe (web):**
+   - Compiler: AdaWebPack 24 (GNAT-LLVM, LLVM 16) for `--target=wasm32`, flags `-O2 -gnat2022 -gnatwa -gnata` and
+     `--RTS=<adawebpack>/rts-native`. Release adds per-unit suppression for proven units only.
+   - Linker: `wasm-ld --no-entry --strip-all --allow-undefined --export=<list>` with the export list **generated from
+     the `Pc.Host_ABI` spec** (smaller and reviewable; `--export-dynamic` only in a debug variant),
+     `-z stack-size=1048576 --initial-memory=16777216`, plus `s-memcop.o s-memmov.o s-memset.o` from `libgnat.a`.
+   - The AdaWebPack compiler itself needs `libgnat-14.so`, `libLLVM-16.so` and `libclang-cpp.so.16`.
+     `tools/get-wasm-toolchain.sh` installs them **into the project tree without sudo** (the Roguelike Jungle recipe,
+     with the GNAT 14 runtime taken from the GNAT-FSF-builds tarball instead of Alire), and `wasm-ld` comes from
+     `lld` or the pip package `ziglang`.
+   - **Native binaries link the GNAT runtime statically** (`-static` binder switch). Roguelike Jungle's runner failed
+     on a second machine with "libgnat-14.so not found"; the same sources build and run with GNAT 12.2 when linked
+     against that compiler's runtime.
+   - Code must compile **warning-free on GNAT 12.3 (Robert's laptop) and GNAT 14**: under `-gnat2022`, array
+     aggregates use `[...]` (GNAT 12 warns on `(...)`, seen in Roguelike Jungle).
+10. **Packaging and deployment:** the default export is one self-contained HTML file (base64 wasm + JS host + small
+    data pack). Music and large assets stay beside it and load lazily with a progress bar (Reckoning keeps MP3s next
+    to the HTML); large games use a streamed `.ppak`. Stamp, `version.txt` and publishing follow §10.6.
+
+### 10.6 Web host standard (from the reference implementations)
+The reference web host (`hosts/web/`, M4) and every exported web game follow these rules. Native hosts follow the
+same rules where they apply (stamp, F9, confirms, audio buses).
+1. **Boot:** decode the inlined wasm, instantiate with the real imports wrapped in the dev `Proxy`, run elaboration,
+   check `pc_abi_version`, call `pc_init`. On a last-chance report, stop the loop and show an overlay with exception,
+   file, line and stamp, and keep F9 working.
+2. **Build stamp on every screen:** `vMAJOR.MINOR bYYYYMMDD-HHMM <short-sha>`, with a trailing `+` when the tree was
+   dirty. It sits above every overlay (splash, menu, in-game, F9, screenshots). Every push bumps the version; a stamp is
+   never reused. The same string is in `version.txt` beside the HTML, and in every report (`BUILD` line / `stamp`).
+   Dev builds show a bright badge; public builds may dim it but keep the string.
+3. **Update check:** the page polls `version.txt` from a **raw, uncached origin** (`gist.githubusercontent.com/
+   <user>/<gist>/raw/version.txt` or `raw.githubusercontent.com/<user>/<repo>/<branch>/…/version.txt`), **never from
+   githack**, compares the `b` timestamp, and offers a reload banner.
+4. **Publish targets** (both supported by `poncelet publish web`):
+   - **Gist:** `git clone` the gist (binaries cannot be pushed with `gh gist edit`), copy the HTML + `version.txt` +
+     assets, commit, push. Play URL `https://gist.githack.com/<user>/<gist>/raw/<file>.html?v=<N>`.
+   - **Repository build branch** (Hood Simulator): commit the build to `build/<version>`, play URL
+     `https://raw.githack.com/<user>/<repo>/build/<version>/play/index.html`. Commit source, then build, then push.
+   - **Always curl-verify before announcing:** fetch the raw URL and the githack URL and grep for the new stamp.
+     githack can serve a stale file for 30 seconds to several minutes even with `?v=N`. If it is stale, print the
+     **commit-pinned** URL (`…/raw/<commit>/<file>.html` or `rawcdn.githack.com/…/<commit>/…`).
+5. **Audio:** four buses with separate gain (**SFX, Music, Ambient, Voice**), plus a master. Unlock on the **first
+   `pointerdown`/`touchstart` anywhere** (create/resume the `AudioContext` and play a one-sample buffer; start every
+   `<audio>` element once muted for iOS), and keep a silent keep-alive for the iOS silent switch. On `visibilitychange`
+   mute Ambient (and Voice); Music may continue. The core picks a **context id** (`pc_audio_ctx`; Reckoning: 0 none,
+   1 surface, 2 bunker calm, 3 bunker active, 4 tension, 5 reflection) and the host crossfades. Voice plays one line
+   at a time, and the **newest waiting line wins** (no queue dump). A 0–100 link-quality stat may drive a radio effect
+   (≥70 clear, ≥35 light static, ≥15 dropouts, below that mostly noise). Generated WebAudio ambience driven by game
+   state (time of day, rain, height) is allowed; browser SpeechSynthesis is a placeholder only.
+6. **Input:** arrows, vi keys and numpad, matching both `key` and `code` (NumLock differs by browser); touch,
+   wheel/pinch zoom; virtual controls on phones. Every gameplay key has a visible on-screen equivalent.
+7. **Confirms and warnings:** play actions use an **in-game confirm** (Enter/Y confirm, Esc/N cancel), never
+   `window.confirm`. Warn **only when the warning is real** (a deterministic lethal step, a link about to fail);
+   warning spam teaches players to click through. The core supplies the reason (`pc_query (Danger, dx, dy)`).
+8. **Saves:** IndexedDB (localStorage fallback) holding the `Save` buffer as base64 plus the replay log; autosave;
+   an incompatible version is ignored with a notice. Long-run report files go to a user-picked folder where the
+   browser allows it (`showDirectoryPicker`), else to downloads.
+9. **F9:** the report of §6.15.6. Collection starts at page open; the overlay pauses the game; JSON and Markdown;
+   share sheet or download.
+10. **Testing:** a headless smoke test at a phone viewport (390×844): no console errors, the stamp equals
+    `version.txt`, the core ticks, input and overlays work, screenshot saved. UI tests run in **WebKit, Firefox and
+    Chromium** (Colony4X: GNOME Web/WebKit behaves differently, and `display:flex` can override `hidden`, so modal
+    visibility is asserted).
+11. **One-way dependency:** the simulation never imports host, UI, audio or renderer code (Hood Simulator checks this
+    with grep; Poncelet enforces it with project dependencies plus a CI check, §14).
 
 ## 11. Editor strategy: the editor is the first product
 
@@ -830,7 +994,7 @@ chat with his other game bots. The **format and import mechanism are defined now
     GDScript logic must be **re-written in Ada** (manually or with bot assistance). It's documented as a port, not an import.
   - **Web (JS/TS) or Python/pygame games:** import assets, levels, and text. Port logic manually.
 - Each folded-in game also gets a **parity test** (golden screenshots and a scripted input replay) so that
-  engine changes don't break templates.
+  engine changes don't break templates. Ports of Robert's reference games additionally pass **seed parity** (§13.4).
 - Templates can later be distributed as Steam Workshop items or DLC.
 
 ### 13.3 Asset library (curated paid packs + community)
@@ -845,6 +1009,34 @@ chat with his other game bots. The **format and import mechanism are defined now
 - **Why post-launch:** running a moderated public service is an operations commitment that only makes sense once the
   editor has users. The package format and client come earlier, so templates and plugins already use it.
 
+### 13.4 Reference template packs and seed parity (draft 0.8)
+Robert's four bot-built games are the first template content and, more importantly, the acceptance tests for the
+engine (sources and contributions in Appendix B).
+1. **Reckoning (CDDA In ADA) is the first template pack and the acceptance test for M1–M4.** It is already plain
+   Ada on the web-safe subset, so each milestone must run it:
+   - **M1:** the Reckoning core builds with the Poncelet web toolchain (checks on, last-chance handler) and runs
+     behind a `Pc.Host_ABI` adapter in the WASM spike host; its native runner produces the same numbers.
+   - **M3:** Reckoning's autoplayer runs under `poncelet sim` (200 seeds) and the summary matches the shape of its
+     own batch (runs, survival days, causes, stuck = 0, errors = 0). Its F9 data fits `poncelet-report` v1.
+   - **M4:** Reckoning exports from the editor as one stamped HTML file through the reference web host, publishes
+     with curl-verify, and plays on a phone browser (input, audio unlock, saves, F9).
+   - **Pack contents** (game, not engine): mapgen, units and AI policies, missions, Venus scenario, splash rain,
+     glyph/colour tables, and the event/Look/radio/Help string catalogs moved into `Pc.Text` catalogs.
+2. **Later template ports with seed-parity checks.** A port is accepted only when, for a fixed seed set, it
+   reproduces the reference game's **observable trace**: the per-turn/day summary metrics and event sequence, and
+   for Ada references also the state hash.
+   - **Roguelike Jungle** (Ada, M5): the native `rj_sim` and the ported template give identical JSON lines (hash,
+     funds, events, day) for 20 seeds × 43 200 ticks, natively and in WASM.
+   - **Colony4X** (JavaScript, M7): the Ada port uses `Mulberry32` and integer `Below`. Its trace for seed 7919 after
+     40 all-AI turns must match the reference `col-feedback` sample (whose JS replay hash `5fd168f5` was re-verified
+     on 2026-11-19), plus a 24-seed `sim.js` batch comparison.
+   - **Hood Simulator** (TypeScript + Three.js, M7; needs 3D city, navigation and vehicles from M6): the sim port uses
+     `Mulberry32`; parity on the weekly `SUMMARY`/timeline lines for city seed 1 / Auto seed 1 and a seed batch. The
+     Three.js renderer and React UI are not ported; they are rebuilt with Poncelet scenes and UI.
+   - Where floating-point JS logic cannot be matched bit-for-bit, parity falls back to **statistical parity** over
+     a batch (same distributions within stated tolerances), and the port documents each such system.
+3. Parity tests live in `templates/<id>/tests/parity/` and run with `poncelet test --parity`.
+
 ## 14. Repository layout (planned; nothing created yet)
 
 ```
@@ -854,13 +1046,14 @@ poncelet/                     (public, source-available — see LICENSE)
   platform/    sdl3/ freetype/ harfbuzz/ steam/  (bindings; Steam SDK NOT committed)
   services/    render2d/ audio/ input/ text/ window/ steam/
   runtime/     main entry, loop
+  hosts/       web/ (reference JS host, §10.6)  native/ (SDL3 host)  headless/ (sim + replay driver)
   editor/      imgui-based dev editor
   tools/       catalog compiler, asset packer, string-id generator, template tool, API doc generator
   cli/         `poncelet` headless CLI (JSON output)
   mcp/         MCP server (stdio + local HTTP), shares Pc.Tools with the editor
   schemas/     JSON Schemas for all project file formats (versioned)
   AGENTS.md  llms.txt   (AI-tool guidance for the engine repo)
-  templates/   <one dir per template>
+  templates/   <one dir per template>, e.g. reckoning/ (first pack, §13.4), each with tests/parity/
   locale/      engine UI catalogs (en de fr ru zh_Hans es it)
   docs/        DESIGN.md, NAME_CHECK.md, html pages for githack
   ci/          GitHub Actions workflows per OS
@@ -900,6 +1093,11 @@ The step-by-step plan with verification commands is in **`docs/IMPLEMENTATION_PL
 **Platform placement (draft 0.7):** web 2D in M4 and 3D in M6, Android/iOS dev builds in M6 with store signing in
 M8 (gated), and consoles, OpenXR, RTL, and the community library post-launch in M9. Reasons are in §2 and §13.3.
 
+**Reference games as acceptance tests (draft 0.8):** Reckoning must build and run on the engine at M1 (WASM spike),
+M3 (`poncelet sim` batch, F9 report) and M4 (stamped single-HTML web export); Roguelike Jungle is ported with hash
+parity in M5, Colony4X and Hood Simulator with seed parity in M7, and all four packs are finalised and signed in M8
+(§13.4, Appendix B).
+
 **Schedule realism:** this is a multi-year roadmap. Adding the five features before launch moves M8 out by roughly
 two to three milestone-lengths compared with draft 0.5. The mitigations are reusing proven C libraries (Jolt,
 Manifold, ENet, dav1d/Theora, cgltf), small verifiable steps, and AI-assisted development through the CLI and MCP.
@@ -932,7 +1130,8 @@ Manifold, ENet, dav1d/Theora, cgltf), small verifiable steps, and AI-assisted de
    Ship 2D first, then 3D on the same architecture.
 2. **What engines and languages were your other bot-built games written in?** *Partly answered:* Hood Simulator and
    Colony4X are JavaScript games (so their templates are ports to Ada), and Roguelike Jungle and CDDA In ADA (Reckoning) are Ada games built to WASM.
-   This decides whether templates are imports or ports. (Pack *contents* will be decided in the group chat.)
+   This decides whether templates are imports or ports. **Draft 0.8:** all four packages studied (Appendix B);
+   Reckoning is the first pack, the others are seed-parity ports (§13.4).
 3. ~~What do we sell first?~~ **Answered (2026-11-19):** the engine + editor as a Steam software product, bundled with
    template packs. **New, to confirm:** the end-user licence for games made with Poncelet. Proposal: users own and may
    sell their games royalty-free, the runtime may be redistributed inside exported games, and engine/editor source
@@ -954,8 +1153,17 @@ Manifold, ENet, dav1d/Theora, cgltf), small verifiable steps, and AI-assisted de
     Is that acceptable, with CI compile-only before then?
 13. **Community asset library:** self-hosted service vs. Steam Workshop vs. both; free only or paid assets with a
     revenue share? (Post-launch, M9.)
-14. **Web toolchain:** to be finalised from the group chat, based on the Roguelike Jungle and CDDA In ADA setups (baseline decisions already in §10.5) (exact GNAT-LLVM/runtime
-    setup, WebGL2 vs. WebGPU first, audio approach).
+14. ~~Web toolchain~~ **Answered in draft 0.8 (§10.5.9):** AdaWebPack 24 (GNAT-LLVM) with checks on and a
+    last-chance handler, explicit export list, WebGL2 first and WebGPU later, four WebAudio buses (§10.6).
+15. **Default RNG for new games:** PCG32 (proposed) or mulberry32 (already used by Colony4X and Hood Simulator)?
+    Compatibility generators exist either way.
+16. **Web toolchain on your laptop:** OK for `tools/get-wasm-toolchain.sh` to download AdaWebPack 24 and the GNAT 14
+    runtime library into the project tree (no sudo, no Alire)? Native builds stay on your GNAT 12.3.
+17. **Default publish target for Poncelet demos and exported games:** a gist (as Reckoning and Roguelike Jungle do)
+    or a `build/<version>` branch in the repository (as Hood Simulator does)? Both will be supported.
+18. **Template code ownership:** may Reckoning, Roguelike Jungle, Colony4X and Hood Simulator content ship inside
+    the commercial editor as template packs under the Poncelet EULA (all are yours), and which of them should be paid
+    DLC rather than bundled?
 
 ## Appendix A. Godot 4.x parity matrix (audit of 2026-11-19, draft 0.5)
 
@@ -1256,3 +1464,75 @@ compatibility/mobile renderers, RTL text, and a community asset library are all 
 3. **No Collada import** (convert via Blender). FBX is planned (ufbx).
 4. **Licence and business model:** commercial, all rights reserved, sold on Steam, instead of MIT/open development.
    Curated paid template packs sit alongside the community library.
+
+## Appendix B. Reference implementations (draft 0.8)
+Four packages from Robert's game bots (received 2026-11-19, studied in full; not committed to this repository).
+They are read for architecture, interfaces and test method. Engine code is re-written for `Pc.*` with contracts; it
+is not copied.
+
+### B.1 The four packages
+
+| Package | Language / build | Version | Contributes to Poncelet |
+|---|---|---|---|
+| **Reckoning** (CDDA In ADA) | Plain Ada → wasm32 (AdaWebPack), one HTML file, gist + githack | v0.54 | Host ABI shape (≈45 integer exports), command codes with time costs, numeric event queue + one host switch as the localisation seam, packed view cells, look layers, byte-blob save idea, music context, radio SNR, in-game confirms, stamp + `version.txt` + curl-verify, 200-seed native batch (`auto_run`) and summary, rich F9 JSON; **first template pack** (§13.4) |
+| **Roguelike Jungle** | Plain Ada, native + wasm32 from the same sources, gprbuild | v0.04 (`771f5c3`) | Named RNG streams (xorshift32*), binary fixed point, tick clock with real-time-with-pause, one `Order` entry point with busy/time cost and result enum, state hash + native-vs-WASM chunked determinism test, **last-chance handler**, explicit export list and link flags, toolchain fetch script, F9 report with schema, required "expected" note, Markdown variant and stamped screenshot, phone-viewport smoke test |
+| **Colony4X** | Plain JavaScript + canvas, no build | v0.9 (`90b4ee2`) | Pure seeded sim with one `act`, mulberry32, FNV-1a state hash, **saves = action logs** with exact replay, data-only events (~60 kinds), `col-feedback` report, fair lineups for batches, `sim.js` batch stats, WebKit/Firefox/Chromium UI tests |
+| **Hood Simulator** | TypeScript + React + Three.js (Vite) | 1.2.82 (`099e8c9`) | Two seeds (city + AI), one explicit `Rng` (mulberry32), command API returning ok/fail, presentation events with sequence/time/pos, one-way sim→view dependency, save schema checked at build, autoplayer rules from 80+ versions, decision matrix and per-order traces, periodic report files with `BUILD`/`TEST KEY`/`SUMMARY` lines, build-branch publishing |
+
+### B.2 Conflicts and how Poncelet resolves them
+
+| Topic | Reference variants | Poncelet standard |
+|---|---|---|
+| RNG algorithm | LCG global (Reckoning), xorshift32* streams (RJ), mulberry32 (Colony4X, Hood) | `Pc.Random`: explicit state, named streams, **PCG32 default**, the three others as bit-exact compatibility generators for ports (§6.15.1) |
+| Seeds | one seed (Reckoning, RJ, Colony4X), two seeds (Hood) | world seed + AI seed, streams derived from them |
+| Runtime checks | `-gnatp` (Reckoning) vs. checks on + LCH (RJ) | checks on in dev on all targets; release suppression only for SPARK Silver units (§10.5.2) |
+| Export list | `--export-dynamic` (Reckoning) vs. explicit `--export=` list (RJ) | explicit list generated from `Pc.Host_ABI`; `--export-dynamic` only in a debug variant |
+| `memcpy` & co. | JS imports (Reckoning) vs. objects from `libgnat.a` (RJ) | runtime objects; the host does not implement them |
+| LCH payload | line only (RJ) | file pointer + line, host reads the file name from memory |
+| Command shape | `act (code, dx, dy)` (Reckoning), `order (code)` + `last` (RJ), `act (S, {type, ints})` (Colony4X), API functions → ok/fail (Hood) | `pc_act (actor, verb, a1, a2, a3) → status` (≥ 0 time cost, < 0 result code), same entry for player, NPCs and autoplayer |
+| Events | 256 (code, arg) cleared per act, silent overflow (Reckoning); counter only (RJ); kind + data (Colony4X); sequence/week/minute/kind/actor/pos (Hood) | ring of `{sequence, tick, code, actor, a1, a2, a3}` with `dropped` counter and registered names (§10.5.4) |
+| Time | turns (Reckoning, Colony4X), minute ticks + JS speed (RJ), weekly turns with minutes (Hood) | per-project tick unit, `pc_tick (n)` chunk-independent (§6.15.2) |
+| State hash | none (Reckoning), custom 32-bit (RJ), FNV-1a 32 over JSON (Colony4X) | 64-bit FNV-1a over canonical serialisation + named sub-hashes |
+| Saves | raw record bytes via `Unchecked_Conversion`, version check only (Reckoning); action log (Colony4X); JSON schema (Hood) | replay save (log) **and** versioned `Pc.Serial` snapshot in a host buffer; schema documented |
+| Save compatibility | "doesn't matter" (Reckoning, house rule) | engine formats are versioned from M0 and frozen at the M8 maturity gate; templates may stay unversioned before that |
+| F9 report | four different shapes | `poncelet-report` v1 (§6.15.6), plus the compact `BUILD`/`TEST KEY`/`SUMMARY` text form for long runs |
+| Version check | gist raw (Reckoning, RJ) vs. build branch on githack (Hood) | both publish targets; `version.txt` always polled from a raw origin, never githack (§10.6) |
+| Rendering | canvas text grid (Reckoning, RJ, Colony4X), Three.js (Hood) | same Ada snapshot/draw-list ABI; reference web host uses WebGL2 (canvas only for the M1 spike) |
+| Native runtime | dynamic `libgnat-14.so` (RJ runner failed on another machine) | static GNAT runtime in all native binaries; compile clean on GNAT 12.3 and 14 |
+
+### B.3 Consolidated lessons (deduplicated)
+1. Keep checks on in development; a last-chance handler turns a silent WASM failure into file + line on screen.
+2. The core is a hard subset: no tasking, heap, handlers, Text_IO or floats where results must match; fixed point instead.
+3. No hidden globals: pass world and RNG state explicitly (needed for SPARK and for exact replays).
+4. One RNG source, explicit and saved with the world; never `Math.random` or wall-clock time in rules.
+5. Two seeds (world and AI) and vary both in batches; rotate factions/start slots for fairness.
+6. One command entry point for players, NPCs and autoplayer; every command has a time cost; failures still cost time.
+7. Determinism must not depend on frame chunking; test native vs. WASM with uneven chunks.
+8. Log actions, not just state: a bug report is seeds + action log; saves can be logs.
+9. Events carry numbers, not text; one host table turns them into words, sound and voice (the localisation seam).
+10. Never expose a record address through `Unchecked_Conversion`; use buffers with a schema and a version.
+11. The autoplayer is a real player: public API only, player-knowable data only, coverage of every action.
+12. Estimates use the simulation's own pathing; every set-aside rule needs an observable way back; one fitness currency.
+13. Prefer report files and numeric decision matrices to live debugging; a fix names the metric it should move.
+14. A visible stamp on every screen, in `version.txt` and in every report; bump on every push.
+15. githack caches: poll raw origins, curl-verify before announcing, give a commit-pinned URL when stale.
+16. Mobile audio unlocks on the first tap anywhere; separate SFX/Music/Ambient/Voice buses; mute ambience when hidden.
+17. In-game confirms only, and warnings only when they are real.
+18. Single-file HTML for code and small data; big media beside it, loaded lazily.
+19. Test in WebKit, Firefox and Chromium at a phone viewport; map both `key` and `code`.
+20. The `Proxy`-returns-0 import guard prevents startup traps but hides typos; log unknown imports in dev.
+21. Link native tools statically and keep code warning-free on both GNAT 12 and GNAT 14.
+
+### B.4 Engine vs. template content
+
+| Goes into the engine (`Pc.*`, hosts, tools) | Stays in template packs |
+|---|---|
+| `Pc.Host_ABI`, event ring, buffers, LCH import, export-list generator | Command/verb sets, event code lists, stat ids |
+| `Pc.Random` (+ compatibility generators), `Pc.Fixed`, `Pc.Hash` | Fixed-point unit types of a game (money, heat, …) |
+| Command dispatcher with busy/time cost, autoplayer interface, stuck detection, coverage counters | Autoplayer valuations, personalities, utility brains |
+| 2D grid/tilemap with layers, Bresenham LOS, FOV, fixed-bound BFS pathing, route graph + fog of war | Tile enums, glyph/colour tables, opacity and cone constants, map generators |
+| Link-quality 0–100 with hard cut, audio context ids, radio SNR effect in the host | Antennas, jammers, music tracks, voice lines |
+| Dialogue/look/examine id protocol, in-game confirm, danger-query protocol | Dialogue text, Look/Help text, danger rules |
+| `poncelet sim`, `--compare`, report format, periodic report files, decision-matrix support | Metric choices and summary groupings of a game |
+| Web host: boot, stamp, update check, publish + curl-verify, audio buses, input, saves, F9, smoke tests | Splash effects (Reckoning rain), menus' content, achievements' rules |
+| Mission/achievement **bitfield hook** | Missions and achievements themselves |
