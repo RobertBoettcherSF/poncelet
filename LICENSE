@@ -1,0 +1,26 @@
+Poncelet Engine — Copyright (c) 2026 Robert Boettcher. All rights reserved.
+
+This repository is published so that its contents can be viewed and linked to
+(for example via raw.githack.com). Publication does NOT grant any licence.
+
+You MAY:
+  - view and read the files in this repository through GitHub or a web proxy;
+  - link to them.
+
+You MAY NOT, without prior written permission from the copyright holder:
+  - copy, reproduce, modify, merge, translate, or create derivative works of
+    any part of this repository (source code, documentation, assets, designs);
+  - distribute, sublicense, sell, or otherwise make it available to others;
+  - use it, in whole or in part, to build, train, or operate any software,
+    game, engine, or machine-learning model.
+
+Forking on GitHub is permitted only to the extent strictly required by the
+GitHub Terms of Service; such forks carry no rights beyond viewing.
+
+Third-party components included in or referenced by this repository remain
+under their own licences; see THIRD_PARTY_NOTICES.md. Nothing in this notice
+restricts rights you have under those licences.
+
+THE CONTENTS ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
+
+Permission requests: contact the copyright holder via GitHub (@RobertBoettcherSF).

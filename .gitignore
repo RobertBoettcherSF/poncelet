@@ -1,0 +1,73 @@
+# --- GNAT / gprbuild ---
+*.o
+*.ali
+*.a
+*.so
+*.so.*
+*.dylib
+*.dll
+*.lib
+*.exe
+*.bexch
+*.stderr
+*.stdout
+b__*.ad[sb]
+b~*.ad[sb]
+auto.cgpr
+gpsauto.cgpr
+*.cgpr.bak
+regtests.out
+obj/
+lib/
+bin/
+build/
+dist/
+
+# --- Alire ---
+alire/
+config/*_config.ad[sb]
+config/*_config.gpr
+config/*_config.h
+
+# --- GNATprove / SPARK ---
+gnatprove/
+*.spark
+*.why
+*.mlw
+
+# --- Coverage / profiling ---
+*.gcda
+*.gcno
+*.gcov
+gmon.out
+
+# --- Steamworks SDK (Valve licence: never commit) ---
+steamworks/
+steamworks_sdk*/
+steamworks-sdk*/
+sdk/steamworks*/
+**/steamworks_sdk*/
+steam_appid.txt
+steam_api*.dll
+steam_api*.lib
+libsteam_api.*
+*.vdf.local
+steamcmd/
+
+# --- Packaging outputs ---
+*.ppak
+*.dmg
+*.app/
+*.zip
+
+# --- Third-party reference clones (not ours) ---
+godot/
+godot-ref/
+
+# --- Editors / OS ---
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
