@@ -1,6 +1,6 @@
 # Poncelet — Implementation Plan (M0 → M8, plus M9 outlook)
 
-> Companion to `docs/DESIGN.md` (draft 0.7). Copyright (c) 2026 Robert Boettcher. All rights reserved.
+> Companion to `docs/DESIGN.md` (draft 0.7.1). Copyright (c) 2026 Robert Boettcher. All rights reserved.
 > Status: plan only. No code has been committed yet. Dated 2026-11-19.
 
 ## How to use this plan
@@ -15,8 +15,9 @@
   `-gnatwa`, English identifiers, user-visible text only via `String_Id`, and new file formats with schemas (DESIGN §12.1).
 - **Platforms:** develop and test on Linux Mint. CI compiles and smoke-tests Windows/macOS on free runners. No sign-ups
   until step M8.6. Game export targets: desktop, web (M4/M6), Android and iOS (M6 dev builds, M8 store), consoles
-  via partners and OpenXR post-launch (M9). Web toolchain details come from Roguelike Jungle, the bot with
-  Ada-to-WASM experience (Hood Simulator and Colony4X are JavaScript games).
+  via partners and OpenXR post-launch (M9). Web follows the proven Ada-to-WASM setups of Robert's Roguelike Jungle
+  and CDDA In ADA bots: web-safe Ada subset, numeric host ABI, AdaWebPack GNAT-LLVM (DESIGN §10.5). Hood Simulator
+  and Colony4X are JavaScript games.
 - **One-time system packages (from M1 onward):** building SDL3 locally needs build tools and display headers, roughly
   `sudo apt install cmake ninja-build pkg-config libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev`
   `libxss-dev libxkbcommon-dev libwayland-dev libegl1-mesa-dev libvulkan-dev libpulse-dev libasound2-dev`.
@@ -26,17 +27,17 @@
 
 | Milestone | Theme | Steps |
 |---|---|---|
-| M0 | Skeleton + CLI | 9 |
+| M0 | Skeleton + CLI | 10 |
 | M1 | Pixels + formats | 10 |
 | M2 | World, UI, i18n, MCP | 10 |
 | M3 | 2D complete + hot reload | 14 |
-| M4 | Export + tooling | 11 |
+| M4 | Export + tooling | 12 |
 | M5 | 3D foundation + CSG | 10 |
 | M6 | 3D complete + video + networking base | 15 |
 | M7 | Advanced features | 12 |
 | M8 | Beta, maturity gate, platforms + Steam | 10 |
 | M9 | Post-launch (outlook) | 6 |
-| **Total** | | **107** |
+| **Total** | | **109** |
 
 Critical path: M0 → M1 (SDL3, render core, WASM spike) → M2 (World, UI, tools API) → M3 (2D) → M5 (3D core) → M6 → M7 (GI,
 multiplayer, visual shaders) → M8. M4 (export) can run in parallel with early M5 once M3.8 is done. Networking base
@@ -110,13 +111,21 @@ Only GNAT 12.3 + gprbuild needed. No SDL3, no Alire, no sudo.
 - **Done when:** Ends with `ALL TESTS PASSED`; CI green
 - **Depends on:** M0.7
 
-### M0.9 Portability rules for the core
-- **Goal:** Keep `pc-core` usable on WebAssembly, iOS, consoles, and restricted runtimes.
-- **Packages/files:** `core.adc` (configuration pragmas: `No_Tasking`, `No_Allocators`, no OS/IO units), `poncelet.gpr`
-- **Contracts/tests:** Build fails if the core uses tasking, allocators, or Ada.Text_IO/Directories
+### M0.9 Web-safe Ada subset for the core
+- **Goal:** Keep `pc-core` in the web-safe subset (DESIGN §10.5) so it runs on WebAssembly, iOS, consoles, and restricted runtimes.
+- **Packages/files:** `core.adc` (configuration pragmas: `No_Tasking`, `No_Allocators`, `No_Exception_Handlers`, no Text_IO/OS units), `poncelet.gpr`
+- **Contracts/tests:** Build fails if the core uses tasking, allocators, exception handlers, or Text_IO/Directories; fixed-size data only
 - **Verify:** `./build.sh`
 - **Done when:** `BUILD OK` with `core.adc` active; a deliberate violation in a scratch file is rejected
 - **Depends on:** M0.8
+
+### M0.10 Numeric host ABI v0 + last-chance handler
+- **Goal:** `Pc.Host_ABI`: integer-only exported functions (`pc_init`, `pc_tick`, `pc_act`, `pc_read_stat`, `pc_event_*`, `pc_hash_*`, buffer accessors); dev builds keep all checks; last-chance handler reports file/line to the host.
+- **Packages/files:** `src/host/pc-host_abi.ads/.adb`, `src/host/pc-last_chance.adb`, `tests/host_abi_test.c` (C harness)
+- **Contracts/tests:** ABI functions total over their integer domains (contracts); a deliberate failing assertion reports exception name, file, and line
+- **Verify:** `./run-tests.sh hostabi`
+- **Done when:** `PASS hostabi`: the C harness drives init/tick/hash through the ABI and gets the same hash as `poncelet run`
+- **Depends on:** M0.9
 
 ## M1 — Pixels + formats
 
@@ -194,13 +203,13 @@ First step that needs SDL3. It's built locally into `third_party/` by a script, 
 - **Done when:** PNG written and its hash matches the golden
 - **Depends on:** M1.6, M1.8
 
-### M1.10 WebAssembly toolchain spike
-- **Goal:** Build the headless core to wasm32 and run it in Node/browser. Setup based on Roguelike Jungle's proven Ada-to-WASM toolchain (from the group chat).
-- **Packages/files:** `tools/wasm/*`, `web/headless.html`
-- **Contracts/tests:** Same world hash as the native build for the same seeds
+### M1.10 WebAssembly toolchain spike (AdaWebPack GNAT-LLVM)
+- **Goal:** Build the headless core + host ABI to wasm32 with AdaWebPack GNAT-LLVM and `wasm-ld --no-entry --export-dynamic --allow-undefined --strip-all`; JS host with a Proxy for imports (default 0) reads linear memory; dev build keeps checks + last-chance handler (Roguelike Jungle style), release uses checks-off only for SPARK-proven units.
+- **Packages/files:** `tools/wasm/build.sh`, `web/host/*.js`, `web/headless.html` (single-file, base64-inlined wasm)
+- **Contracts/tests:** Same world hash as native; a forced assertion shows file:line in the browser console overlay
 - **Verify:** `./tools/wasm/build.sh && node web/run_headless.mjs tests/data/valid.pscene 600 1 2`
-- **Done when:** Hash equals the native `poncelet run` hash
-- **Depends on:** M0.9
+- **Done when:** Hash equals native; `web/headless.html` works when opened directly from disk
+- **Depends on:** M0.10
 
 ## M2 — World, UI, i18n, MCP
 
@@ -473,9 +482,9 @@ First step that needs SDL3. It's built locally into `third_party/` by a script, 
 - **Depends on:** M3.4
 
 ### M4.10 Web export (2D)
-- **Goal:** Export 2D games to WebAssembly with WebGL2, WebAudio, DOM input, IndexedDB saves.
-- **Packages/files:** `src/platform/web/*`, `tools/export_web.sh`, `web/template/*`
-- **Contracts/tests:** Replay hash identical to native
+- **Goal:** Export 2D games to WebAssembly: numeric host ABI, WebGL2 (compatibility tier), WebAudio, DOM/Gamepad input, IndexedDB saves; single-file HTML by default, multi-file with streamed `.ppak` for large games.
+- **Packages/files:** `src/platform/web/*`, `tools/export_web.sh`, `web/template/*`, `tools/publish_web.sh` (version stamp, `version.txt`, githack curl check, commit-pinned fallback URL)
+- **Contracts/tests:** Replay hash identical to native; numeric event codes mapped to localised text/sound host-side or via Pc.Text
 - **Verify:** `./bin/poncelet export --target web samples/platformer /tmp/web && python3 -m http.server -d /tmp/web 8000`
 - **Done when:** Game plays at http://localhost:8000 in Firefox/Chrome; same replay hash as native
 - **Depends on:** M1.10, M4.9
@@ -487,6 +496,14 @@ First step that needs SDL3. It's built locally into `third_party/` by a script, 
 - **Verify:** (CI)
 - **Done when:** All platforms report identical checkpoint hashes for fixed-point replays
 - **Depends on:** M4.3, M4.10, M3.13
+
+### M4.12 Release check policy
+- **Goal:** Release builds suppress checks only for SPARK Silver-proven units; all others keep checks.
+- **Packages/files:** `tools/gen_suppress.sh` (generates per-unit `pragma Suppress` config from gnatprove results)
+- **Contracts/tests:** CI fails if a non-proven unit has checks suppressed
+- **Verify:** `./build.sh release`
+- **Done when:** Report lists suppressed units, all of them proven
+- **Depends on:** M2.10
 
 ## M5 — 3D foundation + CSG
 

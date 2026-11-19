@@ -1,7 +1,7 @@
-# Poncelet Engine — Design Document (Draft 0.7)
+# Poncelet Engine — Design Document (Draft 0.7.1)
 
 > Name: **Poncelet** (chosen 2026-11-19, after Jean-Victor Poncelet, projective geometry; see `docs/NAME_CHECK.md`).
-> Author: Robert Boettcher, with Grok Bot. Status: draft 0.7, 2026-11-19 (games target all platforms: desktop, web, Android, iOS, consoles via partners, XR; renderer tiers; RTL later; community asset library; multiplayer, dynamic GI, video, visual shaders and CSG moved into the first sellable release; step plan in docs/IMPLEMENTATION_PLAN.md; Godot parity audit + matrix in Appendix A; full 2D + 3D; editor is the first Steam product; Linux-first development, Steam/Apple deferred; AI-tool support is a core feature).
+> Author: Robert Boettcher, with Grok Bot. Status: draft 0.7.1, 2026-11-19 (web-safe Ada subset + numeric host ABI from proven Ada-to-WASM bots; games target all platforms: desktop, web, Android, iOS, consoles via partners, XR; renderer tiers; RTL later; community asset library; multiplayer, dynamic GI, video, visual shaders and CSG moved into the first sellable release; step plan in docs/IMPLEMENTATION_PLAN.md; Godot parity audit + matrix in Appendix A; full 2D + 3D; editor is the first Steam product; Linux-first development, Steam/Apple deferred; AI-tool support is a core feature).
 > Clean-room: Godot (MIT) was studied **for architecture only**. No Godot code, text, or assets are copied here.
 > Everything below describes our own design.
 
@@ -41,15 +41,15 @@ What makes it different:
 | Target | Toolchain / API | Renderer tier (§6.2a) | Placement |
 |---|---|---|---|
 | Windows, macOS, Linux | GNAT native, SDL3, SDL_GPU (D3D12/Metal/Vulkan) | High-end (low-end PCs: compatibility) | M1–M4; signed store builds M8 |
-| Web (browser) | Ada → WebAssembly (GNAT-LLVM wasm toolchain; details refined with the Roguelike Jungle bot, the one with Ada-to-WASM experience), WebGL2 (WebGPU later) | Compatibility (WebGPU: mobile tier later) | Toolchain spike M1, 2D M4, 3D M6, WebGPU M9 |
+| Web (browser) | Ada → WebAssembly (AdaWebPack GNAT-LLVM wasm32 + wasm-ld, proven by Robert's CDDA In ADA and Roguelike Jungle bots; §10.5), WebGL2 (WebGPU later) | Compatibility (WebGPU: mobile tier later) | Toolchain spike M1, 2D M4, 3D M6, WebGPU M9 |
 | Android (arm64, x86-64) | GNAT cross / GNAT-LLVM + Android NDK, SDL3, Vulkan or GLES3 | Mobile (old devices: compatibility) | Dev builds M6; Play Store signing M8 (gated) |
 | iOS / iPadOS (arm64) | GNAT-LLVM arm64-apple-ios + Xcode toolchain, SDL3, Metal | Mobile | CI compile M6; device builds and App Store M8 (gated on Mac + Apple account) |
 | Consoles | Third-party porting partners under platform NDAs; console-friendly platform layer from M0 | Partner-provided backend | Post-launch (M9), partner-driven |
 | VR/AR (OpenXR) | OpenXR loader, Vulkan path (PC VR) and Android (standalone headsets) | High-end / mobile with stereo views | Render hooks M7, OpenXR M9 |
 
 **Why this placement:**
-- **Web is pre-launch.** Robert's Roguelike Jungle bot already builds an Ada game to WebAssembly (Robert's other
-  bots, such as Hood Simulator and Colony4X, build JavaScript games), githack can host web
+- **Web is pre-launch.** Robert's Roguelike Jungle and CDDA In ADA bots already build Ada games to WebAssembly
+  (Reckoning even runs on iPhone; Hood Simulator and Colony4X are JavaScript games), githack can host web
   builds for demos, and web export is a strong selling point for the editor.
 - **Android and iOS are pre-launch as dev builds** (M6), so mobile constraints shape the renderer and input early.
   Store signing waits for the sign-up gate in M8, like Steam and Apple.
@@ -529,8 +529,9 @@ These rules apply to everything in `pc-core` and are recommended in game code.
     candidate packages: `Pc.Math`, `Pc.Serial`, `Pc.I18n.Plural`, and `Pc.Physics.Broadphase_2D`.
 11. Mark packages with `pragma SPARK_Mode (On)` as soon as they pass flow analysis. The goal is that
     "SPARK later" means adding `Global`, `Depends`, and loop invariants, not refactoring.
-12. **Portability restrictions for `pc-core`** (enforced by a configuration-pragmas file `core.adc`): no tasking,
-    no allocators, no direct OS or file access, and no dependence on exception propagation. This keeps the core
+12. **Portability restrictions for `pc-core` = the web-safe Ada subset** (§10.5, enforced by a configuration-pragmas
+    file `core.adc`): no tasking, no allocators or heap containers, no exception handlers, no Text_IO or direct OS/file
+    access, and fixed-size data only. This keeps the core
     usable on WebAssembly, iOS, consoles, and restricted Ada runtimes. Threads, files, and time come from services.
 
 ## 10. Build, packaging, and Steam
@@ -584,9 +585,10 @@ These rules apply to everything in `pc-core` and are recommended in game code.
 
 ### 10.4 Web, mobile, console, and XR export
 
-**Web (Ada → WebAssembly).** Of Robert's game bots, **only Roguelike Jungle has Ada-to-WASM experience**.
-Hood Simulator and Colony4X are JavaScript games. **Toolchain details will be refined in the group chat, based on
-Roguelike Jungle's setup.** Baseline plan:
+**Web (Ada → WebAssembly).** Two of Robert's bots have proven Ada-to-WASM experience: **Roguelike Jungle** and
+**CDDA In ADA** ("Reckoning", which also runs on iPhone in Safari). See §10.5 for the resulting decisions.
+Hood Simulator and Colony4X are JavaScript games. **Toolchain details are refined in the group chat, based on
+these two setups.** Baseline plan:
 - GNAT-LLVM targeting `wasm32` (Emscripten or a WASI-based setup, whichever those bots have proven), with a
   restricted Ada runtime. `pc-core` already follows the portability rules (§9 rule 12).
 - Rendering: compatibility renderer on WebGL2 (M4 2D, M6 3D). WebGPU via the mobile tier later (M9).
@@ -618,6 +620,49 @@ platform NDAs, in the style of W4 Games. Platform SDKs never enter this public r
   and an action-system mapping.
 - OpenXR integration post-launch (M9): PC VR via the Vulkan path, standalone Android headsets via the mobile tier,
   hand tracking, passthrough AR where the runtime supports it. WebXR follows WebGPU.
+
+### 10.5 Web-safe Ada subset and the numeric host ABI (decided 2026-11-19)
+This section reconciles the two proven Ada-to-WASM setups from Robert's bots.
+- **CDDA In ADA (Reckoning):** AdaWebPack GNAT-LLVM for `wasm32`; linked with
+  `wasm-ld --no-entry --export-dynamic --allow-undefined --strip-all`; the `.wasm` is base64-inlined into a
+  **single HTML file**. Core rules: no tasking, no Text_IO, no heap containers, no exceptions, and fixed-size
+  arrays and records. Exported C-ABI functions take **integer arguments only** (tick, act, read cell/stat, event
+  queue), and JS reads linear memory directly. Imports are satisfied by a JS `Proxy` that defaults to 0. Ada emits
+  **numeric event codes**, and JS maps them to text and sound, so strings and localisation stay out of the web core.
+  Deployment uses a version stamp + `version.txt`, a curl check of the githack URL, and a fallback to a
+  commit-pinned URL. It builds with `-gnatp` (checks off).
+- **Roguelike Jungle:** a similar toolchain, but it **keeps runtime checks** and installs a **last-chance handler**.
+
+**Poncelet decisions:**
+1. **Web-safe Ada subset for `pc-core`:** no tasking, no heap (no allocators, no heap containers), no exception
+   handlers, no Text_IO or other OS-dependent units, and fixed-size arrays and records. It's enforced by `core.adc`
+   (§9 rule 12) and matches our SPARK rules, so one subset serves web, iOS, consoles, and proofs.
+2. **Runtime checks policy:**
+   - **Debug/dev builds (all targets, including web):** all runtime checks and assertions on (`-gnata`, no `-gnatp`).
+     A **last-chance handler** reports exception name, source file, and line to the host. On the web it calls an
+     imported JS function that logs to the console and shows an overlay.
+   - **Release builds:** checks may be suppressed **only for units proven at SPARK Silver** (absence of runtime
+     errors), per unit via `pragma Suppress` in a generated configuration file. All other units keep their checks,
+     with the last-chance handler writing a crash report. No global `-gnatp`.
+3. **Numeric-only host ABI shared by all targets** (`Pc.Host_ABI`, exported C convention):
+   - Exports use integer and float scalars only: `pc_init (world_seed, ai_seed)`, `pc_tick (frames)`,
+     `pc_act (player, action, arg1, arg2)`, `pc_read_stat (id)`, `pc_event_count`, `pc_event_read (index, field)`,
+     `pc_hash_lo/hi`, and buffer accessors (`pc_buffer_ptr (kind)`, `pc_buffer_len (kind)`) for render snapshots
+     and UTF-8 text blobs that the host reads directly from linear memory.
+   - **Events are numeric codes** (event ID + integer payload). Hosts map them to text, sound, and effects. Text can
+     be resolved either host-side (JS catalog) or via `Pc.Text`, which is itself web-safe (enumeration IDs and byte
+     blobs, no heap). Strings never cross the ABI as owned pointers.
+   - Imports (time, random entropy for non-simulation use, logging, the last-chance handler) have defaults that
+     return 0, so a missing import never traps (the CDDA `Proxy` pattern).
+   - The same ABI drives the native desktop/mobile hosts, the web host, the headless CLI, and replay tests, so
+     determinism is checked identically everywhere.
+4. **Each target supplies renderer, input, audio, and saves** behind the services: SDL3 + SDL_GPU on
+   desktop/mobile; on the web, **WebGL2 first** (compatibility tier), **WebGPU when available** (mobile tier), plus
+   WebAudio, DOM/Gamepad input, and IndexedDB saves.
+5. **Web packaging and deployment:** the default export is a **single self-contained HTML file** (base64-inlined
+   wasm + JS host + data pack for small games). A multi-file export with a streamed `.ppak` covers large games.
+   Every export carries a **version stamp** and `version.txt`. The publish script curl-checks the githack URL and
+   prints a **commit-pinned fallback URL** (rawcdn.githack.com/…/<sha>/…).
 
 ## 11. Editor strategy: the editor is the first product
 
@@ -841,11 +886,11 @@ The step-by-step plan with verification commands is in **`docs/IMPLEMENTATION_PL
 
 | M | Name | Contents | Exit criterion |
 |---|---|---|---|
-| **M0** | Skeleton + CLI | gprbuild projects (Alire optional), `pc-core` (Math 2D+3D, World tables, i18n catalogs with plurals, text scene round-trip), coding rules, LICENSE, `AGENTS.md`. **`poncelet` CLI v0:** `version`, `new`, `validate`, `run --headless`, `test`, `--json`, `--lang`. CI: Linux build+tests, Windows/macOS compile; **portability rules** (`core.adc`: no tasking/allocators/OS access in core; console-friendly service boundaries); `run --headless --world-seed --ai-seed` (seeded, exactly replayable) | `./build.sh` + `./run-tests.sh` green on Linux Mint; `poncelet run --headless` prints a deterministic hash |
+| **M0** | Skeleton + CLI | gprbuild projects (Alire optional), `pc-core` (Math 2D+3D, World tables, i18n catalogs with plurals, text scene round-trip), coding rules, LICENSE, `AGENTS.md`. **`poncelet` CLI v0:** `version`, `new`, `validate`, `run --headless`, `test`, `--json`, `--lang`. CI: Linux build+tests, Windows/macOS compile; **portability rules** (`core.adc`: no tasking/allocators/OS access in core; console-friendly service boundaries); `run --headless --world-seed --ai-seed` (seeded, exactly replayable); **numeric host ABI v0** (`Pc.Host_ABI`) + last-chance handler (§10.5) | `./build.sh` + `./run-tests.sh` green on Linux Mint; `poncelet run --headless` prints a deterministic hash |
 | **M1** | Pixels + formats | Local SDL3 build script, SDL3 binding, window/input, SDL_GPU render core + render graph, 2D batcher, fixed-step loop, offline shader pipeline. **All text formats + JSON Schemas** (`.pscene`, `.pres`, `.pimport`, `.ponpack`), canonical writer; CLI `screenshot`, `inspect`, `fmt`, `schema`; **WebAssembly toolchain spike** (headless core in the browser/Node, same hash as native); render service with a `Render_Method` interface for three tiers | A sprite moves at 60 Hz on Mint; `poncelet screenshot` writes a PNG; schemas validate samples |
 | **M2** | World, UI, i18n, MCP | Generic component stores, hierarchy, events/tags, FreeType/HarfBuzz text + CJK fonts, pseudo-locale, UI toolkit (containers, widgets, themes, docking), editor shell + project manager, undo system, **MCP server v1**, generated API docs, GNATprove flow in CI | Editor shell switches live between seven languages; an AI client creates an entity via MCP and it can be undone |
 | **M3** | 2D complete + hot reload | Own Ada 2D physics, 2D lights/shadows, tilemaps + terrains, particles, animation + tweens, audio mixer v1, save/load, input rebinding, rich text, **game-library hot reload**, editor 2D viewport, inspector, asset import, localisation editor, play-in-editor; input model incl. touch, gestures, and virtual controls (testable with mouse emulation); logical-order text layout (RTL-ready); **`Pc.Random`, replay record/playback (`.preplay`), golden replay tests, autoplayer interface, `poncelet sim` batch runs with per-game report files (F9-style), in-game F9 debug report** | A 2D template game built and live-edited entirely in the editor |
-| **M4** | Export + tooling | Exporter with `.ppak` (Linux tested on Mint; Windows/macOS built in CI, unsigned), Steam stub, template-pack import, profiler + Tracy, movie capture, module-stripped exports; **compatibility renderer 2D** (GL 3.3 / GLES3 / WebGL2), **web export of 2D games** (WASM + WebAudio + DOM input + IndexedDB), githack-hostable demos; cross-platform determinism checks of replays in CI | Exported 2D template runs on Mint; Windows/macOS CI artifacts pass smoke tests |
+| **M4** | Export + tooling | Exporter with `.ppak` (Linux tested on Mint; Windows/macOS built in CI, unsigned), Steam stub, template-pack import, profiler + Tracy, movie capture, module-stripped exports; **compatibility renderer 2D** (GL 3.3 / GLES3 / WebGL2), **web export of 2D games** (WASM + WebAudio + DOM input + IndexedDB), githack-hostable demos; cross-platform determinism checks of replays in CI; single-file HTML web export with version stamp + githack check/commit-pinned fallback; release check policy (checks off only for SPARK Silver units) | Exported 2D template runs on Mint; Windows/macOS CI artifacts pass smoke tests |
 | **M5** | 3D foundation + CSG | Clustered forward+ renderer, PBR, glTF import, cameras, lights, cascaded shadows, sky/IBL, MSAA/FXAA/TAA, Jolt 3D physics behind Ada API, 3D viewport + gizmos, primitive meshes, mesh builder, **CSG (Manifold)**, collision generation | A glTF scene with CSG blockout, lit and shadowed, with physics, editable in the editor |
 | **M6** | 3D complete + video + networking base | Skeletal animation + animation graph + IK/retargeting, lightmap baker, reflection probes, SSAO/SSIL/SSR, decals, volumetric fog, GPU particles, LOD/culling, navmesh + avoidance, GridMap, FBX import, FSR1, sockets/HTTP(S)/WebSocket, **video playback**, audio parity (buses, effects, 3D audio, adaptive music); **mobile renderer tier**, **compatibility renderer 3D**, **web 3D export**, **Android dev builds** (debug APK, lifecycle, touch, sensors), **iOS CI compile** | 3D template game playable and exportable, with an in-game video cutscene |
 | **M7** | Advanced features | **Dynamic GI** (VoxelGI-style volumes + probe-based large-world GI), **visual shader editor** (node graph → shader dialect), **high-level multiplayer** (replication, typed remote calls, ENet, UPnP, multi-instance testing, network profiler), editor plugins + C ABI extensions, accessibility (AccessKit); **asset/plugin package format + library client**; XR preparation (multi-view render graph, XR camera, action mapping); controller-first UI focus navigation | A multiplayer template runs on two instances on one machine; a dynamically lit 3D scene uses node-graph materials |
@@ -875,7 +920,7 @@ Manifold, ENet, dav1d/Theora, cgltf), small verifiable steps, and AI-assisted de
 - **Bundling GNAT with a commercial editor:** use the FSF GCC toolchain under the GCC Runtime Library Exception
   and confirm redistribution terms (GPLv3 for compiler binaries means source offer obligations for the toolchain itself).
 - **Ada toolchains for web, iOS, and consoles:** GNAT-LLVM for wasm32 and arm64-apple-ios is less mature than
-  native GNAT. Mitigations: early CI spikes (M1, M6), Roguelike Jungle's Ada-to-WASM experience, a restricted
+  native GNAT. Mitigations: early CI spikes (M1, M6), the proven Ada-to-WASM setups of Roguelike Jungle and CDDA In ADA (§10.5), a restricted
   runtime, and core portability rules. Console toolchains are a partner topic.
 - **Three renderers to maintain:** shared render graph, materials, and shader dialect, golden screenshots per tier
   in CI, and a clear feature matrix with editor warnings.
@@ -886,7 +931,7 @@ Manifold, ENet, dav1d/Theora, cgltf), small verifiable steps, and AI-assisted de
 1. ~~2D only for v1, or is 3D needed soon?~~ **Answered (2026-11-19):** Poncelet must match Godot in 2D **and** 3D.
    Ship 2D first, then 3D on the same architecture.
 2. **What engines and languages were your other bot-built games written in?** *Partly answered:* Hood Simulator and
-   Colony4X are JavaScript games (so their templates are ports to Ada), and Roguelike Jungle is Ada (built to WASM).
+   Colony4X are JavaScript games (so their templates are ports to Ada), and Roguelike Jungle and CDDA In ADA (Reckoning) are Ada games built to WASM.
    This decides whether templates are imports or ports. (Pack *contents* will be decided in the group chat.)
 3. ~~What do we sell first?~~ **Answered (2026-11-19):** the engine + editor as a Steam software product, bundled with
    template packs. **New, to confirm:** the end-user licence for games made with Poncelet. Proposal: users own and may
@@ -909,7 +954,7 @@ Manifold, ENet, dav1d/Theora, cgltf), small verifiable steps, and AI-assisted de
     Is that acceptable, with CI compile-only before then?
 13. **Community asset library:** self-hosted service vs. Steam Workshop vs. both; free only or paid assets with a
     revenue share? (Post-launch, M9.)
-14. **Web toolchain:** to be finalised from the group chat, based on Roguelike Jungle's Ada-to-WebAssembly setup (exact GNAT-LLVM/runtime
+14. **Web toolchain:** to be finalised from the group chat, based on the Roguelike Jungle and CDDA In ADA setups (baseline decisions already in §10.5) (exact GNAT-LLVM/runtime
     setup, WebGL2 vs. WebGPU first, audio approach).
 
 ## Appendix A. Godot 4.x parity matrix (audit of 2026-11-19, draft 0.5)
@@ -935,7 +980,7 @@ Legend: C = covered, P = partial, M = missing, I = intentionally different.
 | ARM64 Windows/Linux, 32-bit builds | M | ARM64 Linux/Windows added when GNAT + SDL3 CI runners are available; no 32-bit | M9 |
 | macOS universal (arm64 + x86-64) | C | lipo universal app (§10.2) | M8 |
 | Android / iOS export | I | Android (arm64/x86-64) and iOS (arm64) game export: mobile renderer tier, touch, sensors, app lifecycle; unsigned dev builds first, store signing gated (§10.4) | M6 (dev builds) / M8 (store signing) |
-| Web (HTML5) export | I | Ada → WebAssembly (GNAT-LLVM toolchain, refined with the Roguelike Jungle bot's Ada-to-WASM experience), WebGL2 via the compatibility renderer, WebAudio, DOM input, IndexedDB saves; WebGPU later (§10.4) | M1 (spike) / M4 (2D) / M6 (3D) / M9 (WebGPU) |
+| Web (HTML5) export | I | Ada → WebAssembly (GNAT-LLVM toolchain, AdaWebPack GNAT-LLVM, web-safe subset and numeric host ABI per §10.5), WebGL2 via the compatibility renderer, WebAudio, DOM input, IndexedDB saves; WebGPU later (§10.4) | M1 (spike) / M4 (2D) / M6 (3D) / M9 (WebGPU) |
 | Consoles (via third parties) | I | Console ports by third-party partners under platform NDAs (W4-Games-style); console-friendly platform layer from M0 (§10.4) | M0 (rules) / M9 (partner ports) |
 | Headless/server mode (no GPU) | P | `poncelet run --headless` with null render/audio services; dedicated-server exports | M1 (CLI), M9 (server export) |
 
