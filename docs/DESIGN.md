@@ -1,7 +1,7 @@
-# Poncelet Engine — Design Document (Draft 0.1)
+# Poncelet Engine — Design Document (Draft 0.2)
 
 > Name: **Poncelet** (chosen 2026-11-19, after Jean-Victor Poncelet, projective geometry; see `docs/NAME_CHECK.md`).
-> Author: Robert Boettcher, with Grok Bot. Status: first draft, 2026-11-19.
+> Author: Robert Boettcher, with Grok Bot. Status: draft 0.2, 2026-11-19 (adds full 2D + 3D scope; editor is the first Steam product).
 > Clean-room: Godot (MIT) was studied **for architecture only**. No Godot code, text, or assets are copied here.
 > Everything below describes our own design.
 
@@ -9,7 +9,9 @@
 
 ## 1. Vision
 
-A small, commercial-quality **desktop game engine with its core in Ada**. It ships games on **Steam** for
+A commercial **desktop game engine and editor with its core in Ada**, aiming to be **as capable as Godot in both 2D and 3D**.
+The **first Steam product is the Poncelet editor itself** (sold as a Steam software/tool), bundled with starter
+**template packs**. Games made with it ship on **Steam** for
 **Windows, macOS, and Linux** in **seven UI languages**. Its game logic is written so that the parts that
 matter (simulation, rules, save files, maths) can later be **proven with SPARK without being rewritten**.
 
@@ -19,25 +21,35 @@ What makes it different:
    Determinism (fixed-timestep simulation) makes replays, save files, and tests reliable.
 2. **Thin, replaceable platform layer.** Windowing, GPU, audio, input, and Steam sit behind small Ada interfaces
    that bind to stable C APIs. The core never depends on them.
-3. **Templates.** Robert's existing games (built with other bots) become starter templates a user can pick,
-   with a defined import path.
-4. **Localisation is built in, not bolted on.** All user-visible text goes through string IDs from day one.
+3. **Editor as product.** The editor is first-class, with polished UX and a UI localised in all seven languages.
+   It isn't a developer-only tool.
+4. **Templates.** Robert's existing games (built with other bots) become template packs a user can pick,
+   using a pack format defined early (§12).
+5. **Localisation is built in, not bolted on.** All user-visible text goes through string IDs from day one.
 
 ## 2. Scope and non-goals
 
-### In scope (v1)
+### In scope (v1 = first sellable editor release)
 - Desktop targets: Windows 10/11 x86-64, macOS 12+ (universal: arm64 + x86-64), Linux x86-64 (Steam Linux Runtime).
-- **2D first** (sprites, tilemaps, UI, particles, 2D physics). The 3D path is designed for but not built in v1 (open question Q1).
-- UI languages: **English (source), German, French, Russian, Simplified Chinese, Spanish, Italian**.
-- Steamworks: achievements, stats, cloud saves, rich presence, overlay, language detection. Later: workshop and leaderboards.
-- A development editor (tooling build) plus a runtime build for shipping games.
-- A template and project-import system.
+- **Full 2D and full 3D, designed together from the start** (target: feature parity with Godot for typical indie
+  games). 2D: sprites, tilemaps, 2D lights/shadows, particles, 2D physics. 3D: PBR, glTF import, lights and shadows,
+  3D physics, skeletal animation, navigation. One architecture, one scene format, one editor.
+  **Delivery order:** 2D ships first, then 3D lands on the same architecture (§15). Nothing in the 2D work may
+  assume 2D-only.
+- UI languages: **English (source), German, French, Russian, Simplified Chinese, Spanish, Italian**, for both
+  the editor and games.
+- **The editor is the product:** project manager, 2D and 3D viewports, inspector, asset pipeline, localisation
+  editor, play-in-editor, exporter for all three OSes, and template browser.
+- **Template packs** bundled with the editor. Their contents will be decided later with Robert's other game bots.
+- Steamworks: for the editor product (achievements optional, Workshop for template packs later) and as a ready
+  integration for users' games (achievements, stats, cloud saves, rich presence, overlay, language).
 
 ### Non-goals (for now)
 - Mobile, consoles, VR/XR, and **Steam Deck-specific optimisation**. The Linux build will very likely run on Deck,
   because Deck runs ordinary Linux/Proton builds. We just won't tune controls, UI scale, or performance for it.
 - A general-purpose scripting VM such as a GDScript equivalent. Game logic is Ada, compiled in (see §6.6).
-- Competing with Godot or Unity on breadth. We aim for depth on a narrow set of game types.
+- Matching every niche Godot feature (XR, mobile, web export, C#). We match Godot's **core 2D/3D capability
+  for desktop games** and differ through correctness, Ada, and a curated template-first workflow.
 - Open-source distribution. The repository is public but **source-available, all rights reserved** (§14).
 
 ## 3. What we learned from Godot (adopt / adapt / avoid)
@@ -52,14 +64,14 @@ shaping, codecs), `editor/` (built on the engine's own GUI), and `main/` (boot, 
 |---|---|---|
 | **Servers**: subsystems (render, physics, audio, text) behind a narrow API, addressed by opaque resource IDs, and runnable on their own thread | **Adopt** | "Services" with **generational handles** (`Handle := (Index, Generation)`). Opaque handles are ideal for SPARK: no pointers cross the boundary, and invariants are easy to state. |
 | `core/` with no dependency on scene or rendering | **Adopt** | `pc-core` has zero platform dependencies and can be checked in SPARK mode. |
-| **Scene tree** of polymorphic nodes (deep inheritance, signals, virtual callbacks) | **Adapt** | Pointer-heavy, dynamic-dispatch trees are hard to prove. We keep the **authoring idea** (nested scenes, instancing, a hierarchy in the editor) but the runtime stores data in an **ECS-style World**: entities are handles, components live in bounded tables, and hierarchy is a `Parent` component. |
+| **Scene tree** of polymorphic 2D and 3D nodes (deep inheritance, signals, virtual callbacks) | **Adapt** | Pointer-heavy, dynamic-dispatch trees are hard to prove. We keep the **authoring idea** (nested scenes, instancing, a hierarchy in the editor) but the runtime stores data in an **ECS-style World**: entities are handles, components live in bounded tables, and hierarchy is a `Parent` component. |
 | Variant/dynamic object model with reflection | **Avoid** at runtime / **Adapt** for tools | Runtime is statically typed. Reflection for the editor and serialisation comes from **generated** Ada (a code generator emits component descriptors), not from runtime introspection. |
 | **Resources**: reference-counted assets with a text format for scenes and resources, plus a binary format for export | **Adopt** | Text formats for source control (`.pscene`, `.pres`, TOML-like or JSON), and an exporter compiles them to binary packs with checksums. Assets are referenced by stable UUIDs, not paths. |
 | **RenderingDevice** abstraction over Vulkan/D3D12/Metal, plus a GL compatibility renderer | **Adapt** | We don't write our own RHI. We use **SDL3 GPU**, which already abstracts Vulkan, Metal, and D3D12 (§6.2). |
 | **TextServer** with complex shaping (HarfBuzz, ICU, FreeType) and a fallback | **Adopt** | FreeType + HarfBuzz via C bindings. Our seven languages need no RTL, but CJK line breaking and font fallback are required. |
 | **Translation domains**, CSV/gettext catalogs, plural rules, locale fallback | **Adopt** | §8. |
 | **Export templates**: pre-built runtime per platform plus a data pack | **Adopt** | Runtime binary per OS + `.ppak` data pack. Built per OS in CI (§10). |
-| Editor built with the engine's own GUI | **Adapt (later)** | Start with Dear ImGui (via cimgui) as a dev tool and move to our own UI toolkit later (§11). |
+| Editor built with the engine's own GUI | **Adopt** | The editor is the product, built on our own Ada UI toolkit (themes, docking, localisation). Dear ImGui is used only for internal debug overlays (§11). |
 | GDExtension (C ABI plug-ins) | **Defer** | Static linking only in v1. A C ABI plug-in API may come later. |
 | Fixed physics tick decoupled from render (main timer sync) | **Adopt** | Fixed 60 Hz simulation with an accumulator. Rendering interpolates. Simulation is deterministic. |
 | WorkerThreadPool and command queues to servers | **Adapt** | Ada tasks + protected objects for a job system. Simulation stays single-threaded in v1 for provability (§6.5). |
@@ -75,15 +87,18 @@ shaping, codecs), `editor/` (built on the engine's own GUI), and `main/` (boot, 
 | pc-game-api : Systems, Events, Input actions, UI, Save/Load    |   Plain Ada, contracts
 +---------------------------------------------------------------+
 | pc-core (SPARK-ready)                                          |
-|  Math | World/ECS | Physics2D | Anim | Rules | Serial | I18n    |   no platform deps
+|  Math | World/ECS | Physics 2D/3D API | Anim | Nav | Serial    |   no platform deps
+|  Rules | I18n | Scene 2D/3D | Asset DB | Template packs          |
 |  RNG (deterministic) | Bounded containers | Time/Step           |
 +---------------------------------------------------------------+
 | pc-services (Ada interfaces, handles only)                     |
-|  Render2D | Text | Audio | Input | Window | Files | Steam      |   SPARK_Mode Off
+|  Render (2D batch + 3D clustered) | Physics3D backend | Text   |   SPARK_Mode Off
+|  Audio | Input | Window | Files | Steam                         |
 +---------------------------------------------------------------+
 | pc-platform (thin Ada bindings to C)                           |
 |  SDL3 (+SDL_GPU, audio, input) | FreeType | HarfBuzz           |
-|  Steamworks flat C API | stb_image / libpng | Opus/Vorbis      |
+|  Jolt (C shim) | cgltf | KTX/Basis | Steamworks flat C API      |
+|  stb_image | Opus/Vorbis | meshoptimizer                        |
 +---------------------------------------------------------------+
 | OS: Windows (D3D12/Vulkan) | macOS (Metal) | Linux (Vulkan)   |
 +---------------------------------------------------------------+
@@ -100,7 +115,7 @@ The dependency rule is strict: arrows point **down only**. `pc-core` must build 
 |---|---|---|---|
 | **A. Ada main + SDL3 (window, input, audio, SDL_GPU) via thin bindings** | One C API covers Windows, macOS, and Linux. SDL_GPU (SDL 3.2+) wraps Vulkan, Metal, and D3D12, so macOS works without MoltenVK. Steam itself ships SDL. zlib licence. Small surface to bind. | SDL3 Ada bindings are young, so we generate or own a thin binding (`gcc -fdump-ada-spec` + curation). Shaders need cross-compilation (SDL_shadercross / SPIR-V → MSL/DXIL). | **Chosen** |
 | B. Ada + SDL2 (SDLAda) + OpenGL 3.3 | Mature Ada binding (SDLAda). GL is simple. | OpenGL is deprecated on macOS (frozen at 4.1, could be removed). SDL2 is in maintenance mode. | Fallback / prototype only |
-| C. Ada + raw Vulkan (+ MoltenVK on macOS) + own windowing | Maximum control. | Huge effort (RHI, sync, macOS quirks). Not justified for a 2D-first engine. | Reject for v1 |
+| C. Ada + raw Vulkan (+ MoltenVK on macOS) + own windowing | Maximum control. | Huge effort (RHI, sync, macOS quirks). Not justified while SDL_GPU covers the same backends. | Reject; revisit only if SDL_GPU limits 3D features (e.g. ray tracing, mesh shaders) |
 | D. C/C++ host (e.g. raylib, sokol, or a Godot fork) with Ada core as a library | Fastest to pixels. | Two languages own the main loop, which makes the build and the debugger harder. A Godot fork conflicts with clean-room and licence goals. | Keep as an escape hatch: the core is a library anyway |
 | E. raylib via Ada bindings | Very easy. | OpenGL-only (same macOS concern). Less control over the GPU pipeline. | Prototype tool only |
 
@@ -121,15 +136,53 @@ C++ host.
 - `Real` is `Float` (IEEE 32-bit) for rendering-facing data. Simulation can opt into **fixed point**
   (`type Fixed is delta 2.0**(-16) range ...`) where cross-platform bit-exact determinism matters
   (lockstep or replays), decided per game.
-- Vec2/Vec3/Mat3/Mat4/Quat/Rect/Transform2D as records with `Pre`/`Post`. Example: normalising requires length > epsilon.
+- Vec2/Vec3/Vec4/Mat3/Mat4/Quat/Rect/AABB/Plane/Frustum/Transform2D/Transform3D as records with `Pre`/`Post`.
+  Example: normalising requires length > epsilon.
+- Large 3D worlds: an optional `Long_Float` (double) world-position mode with camera-relative rendering, similar
+  in spirit to large-world builds elsewhere. Decided per project.
 - No exceptions on the hot path. Contracts express the domain.
 
 ### 6.2 Rendering (service; SDL_GPU backend)
-- v1: a **batched 2D renderer**: sprites and atlases, 9-slice, tilemaps, text glyph atlases, primitives,
-  simple lights, and post-processing (bloom, colour grading). Render layers and cameras.
-- Shaders are written once in HLSL or GLSL and compiled offline to SPIR-V/MSL/DXIL with SDL_shadercross.
-  Compiled blobs go into the data pack.
-- The 3D path (open question Q1) uses the same service boundary and adds a forward renderer later.
+One render service with a shared core (resources, render graph, cameras, materials) and two pipelines that can
+be composited in the same frame: a 2D canvas over or under a 3D world, and 3D inside 2D via viewports.
+
+**Shared core**
+- GPU resources via SDL_GPU (Vulkan/Metal/D3D12) behind Ada handles: buffers, textures, samplers, pipelines.
+- A small **render graph** (passes declared per frame, with automatic barriers and transient render targets)
+  so 2D, 3D, shadows, and post-processing are just passes.
+- **Cameras:** 2D (zoom, rotation, limits, smoothing) and 3D (perspective, orthographic, frustum offset).
+  Multiple viewports and render-to-texture (minimaps, split-screen, editor previews).
+- **Shaders:** written once in HLSL and compiled offline to SPIR-V/MSL/DXIL with SDL_shadercross. A **material
+  system** with uber-shader permutations plus user shaders in a small Poncelet shader dialect, compiled by the
+  editor. Pipeline cache per GPU.
+
+**2D pipeline**
+- Batched sprite and canvas renderer: atlases, 9-slice, tilemaps (chunked static buffers), text (SDF glyph atlases),
+  primitives and polylines, particles (GPU compute where available, CPU fallback).
+- 2D lights (point, directional) with normal maps and 2D shadow casting (occluder polygons → 1D shadow maps).
+- Canvas layers, y-sort, parallax, and pixel-perfect mode.
+
+**3D pipeline: clustered forward+ renderer**
+- **Depth pre-pass**, then **light clustering** (froxel grid, built by a compute shader) and **forward shading**
+  with all clustered lights. MSAA-friendly, handles transparency well, and copes with many lights. That fits
+  indie-scale scenes and integrated GPUs (MacBooks) better than a deferred G-buffer.
+- **PBR materials:** metallic-roughness (glTF 2.0 model) with albedo, normal, ORM, emission, alpha
+  mask and blend, clearcoat, double-sided, and vertex colours. Image-based lighting from environment maps
+  (prefiltered specular + irradiance), sky (procedural and HDRI), fog, and volumetric fog later.
+- **Lights:** directional, point (omni), spot, area (later), with a per-light shadow toggle.
+- **Shadows:** cascaded shadow maps (4 cascades, PCF/PCSS soft filtering) for directional lights, cube or
+  dual-paraboloid shadows for point lights, perspective maps for spots, and a shadow atlas with per-light resolution.
+- **Global illumination:** v1 has SSAO + baked lightmaps (xatlas unwrap + CPU/GPU baker) + reflection probes.
+  Later: dynamic GI (SDFGI/DDGI-style probes) as a stretch goal.
+- **Post-processing:** HDR, tonemapping (ACES, AgX), bloom, SSR, DOF, auto-exposure, colour grading LUT, FXAA/TAA.
+- **Geometry:** meshes with LODs (meshoptimizer), frustum and occlusion culling (Hi-Z), GPU instancing, MultiMesh
+  for foliage, skinned meshes (GPU skinning), blend shapes, terrain (heightmap chunks) post-v1.
+
+**glTF 2.0 import**
+- cgltf (MIT) parses `.gltf`/`.glb`. The importer converts to our binary mesh, material, skeleton, and animation
+  resources (meshoptimizer for vertex cache and LODs, MikkTSpace tangents, KTX2/Basis texture compression).
+  Imported scenes become `.pscene` sub-scenes that can be re-imported without losing user overrides.
+- Also supported: OBJ (static) and image formats via stb_image. FBX is out of scope (users convert via Blender).
 
 ### 6.3 World / ECS (`Pc.World`)
 - `Entity_Id` is a generational handle. Entities live in a bounded slot table (capacity set per game at
@@ -137,16 +190,42 @@ C++ host.
 - Components are stored in **dense arrays per component type** (struct-of-arrays) with sparse index maps.
   Generic packages: `Pc.World.Store (Component_Type, Capacity)`.
 - Hierarchy: `Parent` and `Children_Range` components. World transforms are computed in a system pass, not on demand.
+- **2D and 3D from day one:** `Transform_2D` and `Transform_3D` components (an entity has one or the other).
+  Typed component sets cover the Godot-equivalent node kinds: Sprite, TileMap, Camera2D/3D, MeshInstance, Light
+  (directional/omni/spot), Body2D/3D, Area2D/3D, CharacterBody2D/3D, AnimationPlayer, AudioSource2D/3D, NavAgent.
 - Systems are plain procedures with explicit `in`/`in out` parameters. That makes data flow visible to SPARK
   flow analysis (`Global`/`Depends` can be added later without changing signatures).
 - **Scenes** (authoring) are trees in the editor and serialise to `.pscene`. Loading a scene **instantiates
   entities** into the World. Scene instancing and nesting work as they do in Godot conceptually.
 
-### 6.4 Physics 2D (`Pc.Physics2D`)
-- Own implementation in Ada: AABB/circle/capsule/convex polygon shapes, a broadphase (uniform grid or
-  sweep-and-prune), impulse solver, kinematic character controller, raycasts, triggers.
-- This is a prime **SPARK candidate**: absence of runtime errors, bounded iterations, no division by zero.
-- Alternative if we go 3D: bind Jolt Physics through a C shim (stays outside the SPARK boundary).
+### 6.4 Physics 2D and 3D (`Pc.Physics`)
+One engine-side API (`Pc.Physics.Api_2D`, `Pc.Physics.Api_3D`): bodies (static, kinematic, dynamic), shapes, joints,
+areas/triggers, ray and shape queries, character controllers, collision layers and masks. Backends sit behind it.
+
+**2D: our own Ada implementation (decided)**
+- Shapes: circle, capsule, box, convex polygon, segment, and tilemap collision. Broadphase: dynamic AABB tree.
+  Sequential-impulse solver with warm starting, CCD for fast bodies, and joints (pin, spring, groove).
+- A prime **SPARK candidate**: absence of runtime errors, bounded iterations, no division by zero, deterministic.
+
+**3D: evaluation**
+
+| Criterion | **Jolt Physics via C shim** | **Own Ada 3D physics** |
+|---|---|---|
+| Capability | Production-proven (Horizon Forbidden West; Godot's optional 3D backend). Convex, mesh, height field, compound shapes, constraints, vehicles, ragdolls, soft bodies, multithreaded, deterministic option | Must be built: GJK/EPA, convex hull, mesh BVH, constraint solver, CCD, character controller, vehicles. Years to reach Jolt quality |
+| Effort to Godot-level 3D | Weeks (C shim over its C++ API + Ada binding) | 1–2 engineer-years+ |
+| SPARK/correctness | Outside the SPARK boundary; contracts on the Ada wrapper only | Fully provable over time |
+| Licence | MIT | ours |
+| Determinism | Cross-platform determinism available as a compile option | under our control |
+| Risk | C++ shim maintenance, ABI per OS (manageable) | schedule, solver robustness |
+
+**Decision:** ship 3D on **Jolt behind our Ada API** (we write a small `extern "C"` shim, about 1–2 k lines, since
+Jolt is C++). In parallel, grow an **own Ada 3D backend** for the simple, provable subset (queries, triggers, kinematic
+character controller, boxes and spheres and capsules). It can become the default later if it reaches parity. The
+backend choice is a project setting, as in Godot. Game logic only sees the Ada API, so switching backends doesn't
+change game code.
+
+**Navigation:** 2D/3D navmesh baking (Recast via C shim, or our own for 2D) and path queries in Ada (A* over
+navmesh polygons, a SPARK candidate). Avoidance (RVO) later.
 
 ### 6.5 Concurrency
 - v1: simulation is single-threaded. Asset loading and audio mixing run in Ada tasks, and communication uses
@@ -179,6 +258,12 @@ C++ host.
 - Our own retained-mode UI in Ada: layouts (box, grid, anchors), widgets (label, button, slider, list,
   text field with IME), and themes. **Every label takes a string ID, not a literal.**
 - IME support (needed for Chinese text entry) uses SDL3 text-input/IME events.
+- The **same toolkit powers the editor** (docking, trees, property grids, code/text views, theming, DPI scaling).
+
+### 6.11 Animation
+- Keyframe tracks on any component property (2D and 3D), easing curves, events, and tweens.
+- 3D skeletal animation from glTF, blend trees and state machines (data assets), root motion, IK (two-bone, look-at).
+- 2D: sprite-frame animation, 2D skeletons (bones + mesh deform) post-v1.
 
 ## 7. Third-party components (all compatible with a closed, commercial product)
 
@@ -192,7 +277,14 @@ C++ host.
 | stb_image / stb_vorbis | decoding | public domain / MIT | |
 | Noto Sans, Noto Sans SC | fonts | SIL OFL 1.1 | embedding OK |
 | Steamworks SDK | Steam | Valve SDK licence | **Must not be committed to the public repo.** Fetched locally/CI secret. |
-| Dear ImGui + cimgui | dev editor | MIT | not shipped in games |
+| Jolt Physics | 3D physics backend | MIT | via our C shim |
+| cgltf | glTF 2.0 import | MIT | editor/importer |
+| meshoptimizer | LODs, vertex cache | MIT | importer |
+| MikkTSpace | tangents | zlib | importer |
+| KTX-Software / Basis Universal | texture compression | Apache-2.0 | importer + runtime transcode |
+| xatlas | lightmap UV unwrap | MIT | editor baker |
+| Recast/Detour | navmesh baking | zlib | optional |
+| Dear ImGui + cimgui | internal debug overlays | MIT | not shipped in the editor UI or games |
 
 ## 8. Localisation design
 
@@ -265,7 +357,7 @@ These rules apply to everything in `pc-core` and are recommended in game code.
 9. **Deterministic RNG** (`Pc.Random`, e.g. PCG32/xoshiro) with explicit state passed in, not a global.
 10. **Tooling:** compile with `-gnat2022 -gnata -gnatwa -gnatVa -gnatyy`, use AUnit or Alire-based tests, and
     run **GNATprove** in CI at `--mode=check` (flow) from M2 onward, then `--level=2` proof on the first
-    candidate packages: `Pc.Math`, `Pc.Serial`, `Pc.I18n.Plural`, and `Pc.Physics2D.Broadphase`.
+    candidate packages: `Pc.Math`, `Pc.Serial`, `Pc.I18n.Plural`, and `Pc.Physics.Broadphase_2D`.
 11. Mark packages with `pragma SPARK_Mode (On)` as soon as they pass flow analysis. The goal is that
     "SPARK later" means adding `Global`, `Depends`, and loop invariants, not refactoring.
 
@@ -300,13 +392,41 @@ These rules apply to everything in `pc-core` and are recommended in game code.
 - Features by milestone: init/restart-check, overlay, language, achievements, stats (M4), Cloud saves,
   rich presence (M5), workshop for template and mod sharing (later).
 
-## 11. Editor strategy
+## 11. Editor strategy: the editor is the first product
 
-1. **M3–M5: dev editor = runtime + Dear ImGui panels** (scene tree, inspector generated from component
-   descriptors, asset browser, localisation table view, play-in-editor). This is the cheapest way to a usable tool.
-2. **Later (when selling the engine itself as a tool on Steam):** rebuild the editor UI on our own runtime UI
-   toolkit, as Godot does. That proves the UI toolkit and gives a consistent, localised editor.
-3. Editor UI language is selectable from the same seven languages, and the editor uses the same catalog system.
+The first thing sold on Steam is **Poncelet Editor** (Steam category: Software → Game Development), bundled
+with template packs. So the editor gets product-level UX, not internal-tool UX.
+
+**Principles**
+1. Built on our **own Ada UI toolkit** (§6.10), the same one games use. This dogfoods the toolkit, gives
+   one theme and DPI system, and makes everything localisable.
+2. **Fully localised in all seven languages**, including menus, inspector property names (via string IDs
+   generated from component descriptors), error messages, docs tooltips, and the template browser. The language
+   follows Steam/OS and can be switched live.
+3. **Discoverable and fast:** command palette, undo/redo for everything (command pattern over the World),
+   autosave and crash recovery, and keyboard shortcuts with rebinding.
+4. **Onboarding:** first-run wizard → pick a template pack → playable project in under a minute, with interactive
+   tutorials authored as data.
+
+**Feature set for the first sellable release (2D complete, 3D complete or early access per milestone)**
+- Project manager (create from template, open recent, import template pack, version check).
+- Scene editor with **2D viewport** (gizmos, snapping, tilemap painter, 2D light/occluder editing) and
+  **3D viewport** (move/rotate/scale gizmos, grid and snapping, camera fly/orbit, lighting preview, lightmap baking).
+- Scene tree dock, inspector (generated from component descriptors), asset browser with thumbnails, and an import
+  dock (glTF, textures, audio, fonts with re-import settings).
+- Animation editor (timeline, curves), material editor (parameters first, node graph later), particle editor.
+- **Localisation editor:** a spreadsheet view of string IDs × seven languages, missing/overlong highlighting,
+  and PO export/import.
+- Play-in-editor (separate process for crash isolation) with a live inspector of the running World. Debugger for
+  Ada game code via GDB integration (breakpoints) + engine profiler.
+- **Code workflow:** game logic is Ada. The editor generates package stubs for new components and systems,
+  runs `alr build`/`gprbuild` (bundled GNAT toolchain per OS, licence-checked under the GCC Runtime Library
+  Exception) and shows errors clickably. Integrates with external editors (VS Code + Ada Language Server, GNAT Studio).
+- **Exporter:** one-click builds for Windows, macOS, and Linux, plus Steamworks toggles (app ID, achievements) for
+  the user's game.
+
+**Distribution of the editor on Steam:** Windows, macOS, and Linux depots. Updates go through Steam branches
+(stable/beta). The GNAT toolchain ships as a separate depot or optional DLC-like download to keep the base install small.
 
 **Browser/WebAssembly preview for githack demos:** githack (raw.githack.com) serves static files from a public
 repo, so HTML/JS/WASM pages work there. Compiling Ada to WASM needs **GNAT-LLVM**, which is still experimental
@@ -315,7 +435,21 @@ Recommendation: **not in v1.** For githack, publish **static HTML pages** (desig
 short videos, an interactive localisation report). Revisit a WASM build of `pc-core` with a JS renderer as an
 experiment after M4. `pc-core` being platform-free makes this possible later.
 
-## 12. Template system (folding in Robert's existing games)
+## 12. Template system and template pack format (defined early, from M1)
+
+The editor ships with **template packs**. Their contents (which of Robert's games) will be decided later in a group
+chat with his other game bots. The **format and import mechanism are defined now** so that work can start in parallel.
+
+### 12.1 Template pack (`.ponpack`)
+- A zip container with `pack.toml` at its root (id, version, `engine_min`, localised name and description IDs,
+  thumbnail, list of templates, author, licence terms for the pack contents, content hash).
+- Contains one or more **templates** (below), shared assets, and per-language catalogs for its own strings.
+- Signed: a SHA-256 manifest + Ed25519 signature by Robert's publisher key, so bundled and DLC packs are
+  verifiable. Unsigned community packs are allowed with a warning.
+- Distribution: bundled in the editor depot, as Steam DLC (paid packs), or via Steam Workshop (later).
+- Versioned with migration: the editor can upgrade templates from older `engine_min` versions with scripted migrations.
+
+### 12.2 Templates
 
 - A **template** is a project directory plus a manifest `template.toml`:
   ```toml
@@ -366,40 +500,56 @@ poncelet/                     (public, source-available — see LICENSE)
 ## 14. Licensing posture (summary)
 - The repository is **public** for githack links, with **all rights reserved / source-available, no reuse**.
   See `LICENSE`.
-- Third-party notices (`THIRD_PARTY_NOTICES.md`) list SDL3, FreeType, HarfBuzz, Noto, and others.
+- Third-party notices (`THIRD_PARTY_NOTICES.md`) list SDL3, FreeType, HarfBuzz, Noto, Jolt, and others.
+- **The editor product needs a separate EULA** (Steam allows a custom EULA). Proposed terms, *to be confirmed by Robert*
+  (open question Q3): users **own the games they make and may sell them** with no royalty, and the **Poncelet runtime
+  and the required third-party libraries may be redistributed inside exported games** (binary form only). The editor
+  and engine source code may not be redistributed. Template-pack content may be used in the user's games.
+  The repository's all-rights-reserved LICENSE covers the source. The EULA covers the product.
 - Keep the Steamworks SDK, signing keys, and Steam build credentials out of the repo (CI secrets only).
 
-## 15. Milestones
+## 15. Milestones (target: sellable editor + template packs on Steam)
+
+2D ships first, then 3D on the same architecture. The editor grows from M2 onward, not at the end.
 
 | M | Name | Contents | Exit criterion |
 |---|---|---|---|
-| **M0** | Skeleton | Repo, Alire/gprbuild projects, `pc-core` with Math + contracts + tests, CI building on all three OSes, coding rules, LICENSE | `alr build` + tests green on Linux, Windows, and macOS |
-| **M1** | Pixels | SDL3 binding, window, input, SDL_GPU sprite batcher, fixed-step loop, shader pipeline | A sprite moves at 60 Hz on all three OSes |
-| **M2** | World and text | ECS World, scenes (text format), FreeType/HarfBuzz text, **i18n system with all seven languages** + pseudo-locale, GNATprove flow in CI | A demo menu switches live between the seven languages, including Chinese |
-| **M3** | Gameplay | Physics2D, animation, audio mixer, save/load, action input with rebinding, runtime UI toolkit | A small playable game (first template candidate) |
-| **M4** | Steam and packaging | Steamworks binding (achievements, stats, language), `.ppak` exporter, signed/notarised macOS app, Steam Runtime Linux build, SteamPipe CI upload to a private branch | Builds installable from Steam (private) on all three OSes |
-| **M5** | Editor and templates | ImGui dev editor, template manifest/tooling, first 1–2 of Robert's games folded in, Cloud saves | Create a new project from a template and play it |
-| **M6** | First sellable | Polish one game (or the template pack) to store quality: localisation QA by native speakers, store page in seven languages, achievements, crash reporting, settings menu (resolution, audio, language) | Steam review passed, release |
-| M7+ | Growth | SPARK proofs of core packages, 3D path, workshop, engine-as-a-product editor, optional WASM experiment | — |
+| **M0** | Skeleton | Repo, Alire/gprbuild projects, `pc-core` (Math 2D+3D, contracts, tests), CI on all three OSes, coding rules, LICENSE | `alr build` + tests green on Linux, Windows, and macOS |
+| **M1** | Pixels + formats | SDL3 binding, window/input, SDL_GPU render core + render graph, 2D batcher, fixed-step loop, shader pipeline. **`.pscene` and `.ponpack` formats specified** | A sprite moves at 60 Hz on all three OSes; format specs reviewed |
+| **M2** | World, UI, i18n | ECS World with 2D/3D transforms, scenes, FreeType/HarfBuzz text, **seven-language i18n** + pseudo-locale, runtime/editor UI toolkit (docking, inspector widgets), GNATprove flow in CI | Editor shell (project manager + empty scene) switches live between seven languages |
+| **M3** | 2D complete | Physics2D (own Ada), 2D lights/shadows, tilemaps, particles, animation, audio, save/load, input rebinding; editor 2D viewport, inspector, asset import, localisation editor, play-in-editor | A 2D template game built entirely in the editor |
+| **M4** | Export + Steam | Exporter (Win/macOS/Linux) with `.ppak`, signed/notarised macOS, Steam Runtime Linux; Steamworks binding for users' games; template-pack import; editor on a private Steam branch | Export a template game to all three OSes; editor installable from Steam (private) |
+| **M5** | 3D foundation | Clustered forward+ renderer, PBR, glTF import, cameras, directional/omni/spot lights, cascaded shadows, IBL/sky; Jolt 3D physics behind Ada API; 3D viewport and gizmos | A 3D template scene imported from glTF, lit, with physics, editable in the editor |
+| **M6** | 3D complete | Skeletal animation + blend trees, lightmap baker, reflection probes, SSAO/SSR/post FX, LODs and culling, navmesh, material editor, particles 3D | 3D template game playable and exportable |
+| **M7** | Product polish (**first sellable**) | Onboarding, tutorials, undo everywhere, crash recovery, editor localisation QA by native speakers, template packs (contents from the group chat) finalised and signed, EULA, store page in seven languages, documentation | Steam review passed; **Poncelet Editor + template packs released** (3D can ship as "early access" if M6 slips) |
+| M8+ | Growth | Own Ada 3D physics backend, SPARK proofs of core packages, dynamic GI, Workshop for packs, paid template DLC, visual material graph, optional WASM experiment | — |
 
 ## 16. Risks
 - **Small Ada game-dev ecosystem:** we own our bindings. Mitigation: keep the C surface tiny and generate bindings.
 - **macOS toolchain** (Apple Silicon GNAT, notarisation): validate in M0, not M4.
 - **CJK text quality** (line breaking, IME, font size): handle in M2 with a native-speaker review.
 - **Determinism with floats across OSes:** use fixed point where it matters, and avoid `-ffast-math`.
-- **Scope creep** (3D, editor): stick to 2D and a dev editor until M6.
+- **Scope (Godot-level 2D + 3D + polished editor):** this is the largest risk. Mitigations: SDL_GPU + Jolt + cgltf
+  instead of writing our own; ship 2D first; allow 3D as early access at M7; cut dynamic GI and node-graph
+  editors to post-v1.
+- **Bundling GNAT with a commercial editor:** use the FSF GCC toolchain under the GCC Runtime Library Exception
+  and confirm redistribution terms (GPLv3 for compiler binaries means source offer obligations for the toolchain itself).
+- **SDL_GPU feature ceiling for advanced 3D** (no ray tracing or mesh shaders): acceptable for v1. Revisit option C later.
 
 ## 17. Open questions for Robert
-1. **2D only for v1, or is 3D needed soon?** This drives renderer, physics, and editor effort.
+1. ~~2D only for v1, or is 3D needed soon?~~ **Answered (2026-11-19):** Poncelet must match Godot in 2D **and** 3D.
+   Ship 2D first, then 3D on the same architecture.
 2. **What engines and languages were your other bot-built games written in** (Godot/GDScript, JS, Python, Ada)?
-   This decides whether templates are imports or ports.
-3. **What do we sell first:** a game built on the engine, a template pack, or the engine/editor itself as a Steam tool?
-   This changes the editor priority and the EULA.
-4. **Final name:** pick from the shortlist in `docs/NAME_CHECK.md` before the repo is created
-   (repo, package prefix, and trademark search depend on it).
+   This decides whether templates are imports or ports. (Pack *contents* will be decided in the group chat.)
+3. ~~What do we sell first?~~ **Answered (2026-11-19):** the engine + editor as a Steam software product, bundled with
+   template packs. **New, to confirm:** the end-user licence for games made with Poncelet. Proposal: users own and may
+   sell their games royalty-free, the runtime may be redistributed inside exported games, and engine/editor source
+   may not be redistributed (§14).
+4. ~~Final name~~ **Answered:** Poncelet.
 5. **macOS distribution:** are you willing to get an Apple Developer ID (signing and notarisation) and access
    to a Mac or CI macOS runners for testing?
 6. Spanish: Spain (`spanish`) or Latin American (`latam`), or both?
-7. GitHub account/org for the public repo, and should CI (GitHub Actions on all three OSes) run there?
+7. Should CI (GitHub Actions on all three OSes) run in the public repo, or in a private mirror (to keep build
+   details and secrets separate)?
 8. Is professional translation planned, or bot-translated with native-speaker review?
 9. Use Alire-managed toolchains (recommended for Windows and macOS), or stay on system GNAT 12.3?

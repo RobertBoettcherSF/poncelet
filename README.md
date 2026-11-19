@@ -1,6 +1,7 @@
 # Poncelet
 
-Poncelet is a commercial desktop game engine for Steam, with its core written in **Ada**.
+Poncelet is a commercial desktop game engine **and editor** for Steam, with its core written in **Ada**.
+The goal is to match Godot's capability in **2D and 3D**.
 
 **Status:** design draft. There is no code yet.
 
@@ -10,8 +11,10 @@ Poncelet is a commercial desktop game engine for Steam, with its core written in
   that selected components can later be proven in **SPARK** without refactoring.
 - **Thin platform layer:** SDL3 (window, input, audio, GPU via Vulkan/Metal/D3D12), FreeType/HarfBuzz for text,
   and Steamworks via its flat C API.
-- **2D first.** An entity/component world, a deterministic fixed-step simulation, and data-driven game content.
-- **Templates:** existing games can be folded in as starter templates for new projects.
+- **2D and 3D from the start:** a batched 2D renderer and a clustered forward+ PBR 3D renderer, glTF import, our own Ada
+  2D physics, and Jolt-backed 3D physics behind an Ada API. 2D ships first, then 3D on the same architecture.
+- **The editor is the first product:** sold on Steam as software, localised in all seven languages, bundled with template packs.
+- **Template packs** (`.ponpack`): existing games folded in as starter templates for new projects.
 - **UI languages (7):** English, German, French, Russian, Simplified Chinese, Spanish, Italian.
   Identifiers are English internally, and all user-visible text goes through string IDs.
 
