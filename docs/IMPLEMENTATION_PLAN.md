@@ -1,6 +1,6 @@
-# Poncelet — Implementation Plan (M0 → M8)
+# Poncelet — Implementation Plan (M0 → M8, plus M9 outlook)
 
-> Companion to `docs/DESIGN.md` (draft 0.6). Copyright (c) 2026 Robert Boettcher. All rights reserved.
+> Companion to `docs/DESIGN.md` (draft 0.7). Copyright (c) 2026 Robert Boettcher. All rights reserved.
 > Status: plan only. No code has been committed yet. Dated 2026-11-19.
 
 ## How to use this plan
@@ -14,7 +14,9 @@
 - **Rules for every step:** Plain Ada with SPARK-ready contracts (DESIGN §9), `-gnata` in dev builds, 0 warnings with
   `-gnatwa`, English identifiers, user-visible text only via `String_Id`, and new file formats with schemas (DESIGN §12.1).
 - **Platforms:** develop and test on Linux Mint. CI compiles and smoke-tests Windows/macOS on free runners. No sign-ups
-  until step M8.6.
+  until step M8.6. Game export targets: desktop, web (M4/M6), Android and iOS (M6 dev builds, M8 store), consoles
+  via partners and OpenXR post-launch (M9). Web toolchain details come from Roguelike Jungle, the bot with
+  Ada-to-WASM experience (Hood Simulator and Colony4X are JavaScript games).
 - **One-time system packages (from M1 onward):** building SDL3 locally needs build tools and display headers, roughly
   `sudo apt install cmake ninja-build pkg-config libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev`
   `libxss-dev libxkbcommon-dev libwayland-dev libegl1-mesa-dev libvulkan-dev libpulse-dev libasound2-dev`.
@@ -24,18 +26,19 @@
 
 | Milestone | Theme | Steps |
 |---|---|---|
-| M0 | Skeleton + CLI | 8 |
-| M1 | Pixels + formats | 9 |
+| M0 | Skeleton + CLI | 9 |
+| M1 | Pixels + formats | 10 |
 | M2 | World, UI, i18n, MCP | 10 |
-| M3 | 2D complete + hot reload | 11 |
-| M4 | Export + tooling | 8 |
+| M3 | 2D complete + hot reload | 14 |
+| M4 | Export + tooling | 11 |
 | M5 | 3D foundation + CSG | 10 |
-| M6 | 3D complete + video + networking base | 11 |
-| M7 | Advanced features | 9 |
-| M8 | Beta, maturity gate, platforms + Steam | 9 |
-| **Total** | | **85** |
+| M6 | 3D complete + video + networking base | 15 |
+| M7 | Advanced features | 12 |
+| M8 | Beta, maturity gate, platforms + Steam | 10 |
+| M9 | Post-launch (outlook) | 6 |
+| **Total** | | **107** |
 
-Critical path: M0 → M1 (SDL3, render core) → M2 (World, UI, tools API) → M3 (2D) → M5 (3D core) → M6 → M7 (GI,
+Critical path: M0 → M1 (SDL3, render core, WASM spike) → M2 (World, UI, tools API) → M3 (2D) → M5 (3D core) → M6 → M7 (GI,
 multiplayer, visual shaders) → M8. M4 (export) can run in parallel with early M5 once M3.8 is done. Networking base
 M6.10 depends only on M0, so it can start early.
 
@@ -83,12 +86,12 @@ Only GNAT 12.3 + gprbuild needed. No SDL3, no Alire, no sudo.
 - **Done when:** `PASS scene`
 - **Depends on:** M0.3
 
-### M0.6 Deterministic headless simulation
-- **Goal:** Fixed-step update and a world hash for reproducibility.
+### M0.6 Seeded deterministic headless simulation
+- **Goal:** Fixed-step update with explicit world seed and AI seed, plus a world hash for exact replay.
 - **Packages/files:** `Pc.World.Step`, `Pc.World.Hash`
-- **Contracts/tests:** Hash over quantised values. Test: 600 frames run twice give the same hash, matching `tests/golden_hash.txt`
-- **Verify:** `./bin/poncelet run tests/data/valid.pscene --headless --frames 600`
-- **Done when:** Prints `World hash: <16 hex digits>` identical to the golden file
+- **Contracts/tests:** Hash over quantised values; seeds passed explicitly (no global RNG, no wall clock). Test: same seeds give the same hash twice; a different AI seed gives a different hash
+- **Verify:** `./bin/poncelet run tests/data/valid.pscene --headless --frames 600 --world-seed 1 --ai-seed 2`
+- **Done when:** Prints `World hash: <16 hex digits>` identical to `tests/golden_hash.txt`
 - **Depends on:** M0.5
 
 ### M0.7 `poncelet` CLI v0
@@ -106,6 +109,14 @@ Only GNAT 12.3 + gprbuild needed. No SDL3, no Alire, no sudo.
 - **Verify:** `./run-tests.sh`
 - **Done when:** Ends with `ALL TESTS PASSED`; CI green
 - **Depends on:** M0.7
+
+### M0.9 Portability rules for the core
+- **Goal:** Keep `pc-core` usable on WebAssembly, iOS, consoles, and restricted runtimes.
+- **Packages/files:** `core.adc` (configuration pragmas: `No_Tasking`, `No_Allocators`, no OS/IO units), `poncelet.gpr`
+- **Contracts/tests:** Build fails if the core uses tasking, allocators, or Ada.Text_IO/Directories
+- **Verify:** `./build.sh`
+- **Done when:** `BUILD OK` with `core.adc` active; a deliberate violation in a scratch file is rejected
+- **Depends on:** M0.8
 
 ## M1 — Pixels + formats
 
@@ -136,7 +147,7 @@ First step that needs SDL3. It's built locally into `third_party/` by a script, 
 - **Depends on:** M1.2
 
 ### M1.4 Render core on SDL_GPU
-- **Goal:** Device, swapchain, buffers, textures, pipelines behind handles.
+- **Goal:** Device, swapchain, buffers, textures, pipelines behind handles; render service exposes a `Render_Method` interface so the mobile and compatibility tiers can plug in later.
 - **Packages/files:** `src/services/render/pc-render*.ad?`
 - **Contracts/tests:** Generational handles for GPU resources. Invalid-handle use is caught by contracts
 - **Verify:** `./bin/poncelet demo clear --frames 120`
@@ -182,6 +193,14 @@ First step that needs SDL3. It's built locally into `third_party/` by a script, 
 - **Verify:** `./bin/poncelet screenshot samples/sprites.pscene --frame 60 --out /tmp/s.png`
 - **Done when:** PNG written and its hash matches the golden
 - **Depends on:** M1.6, M1.8
+
+### M1.10 WebAssembly toolchain spike
+- **Goal:** Build the headless core to wasm32 and run it in Node/browser. Setup based on Roguelike Jungle's proven Ada-to-WASM toolchain (from the group chat).
+- **Packages/files:** `tools/wasm/*`, `web/headless.html`
+- **Contracts/tests:** Same world hash as the native build for the same seeds
+- **Verify:** `./tools/wasm/build.sh && node web/run_headless.mjs tests/data/valid.pscene 600 1 2`
+- **Done when:** Hash equals the native `poncelet run` hash
+- **Depends on:** M0.9
 
 ## M2 — World, UI, i18n, MCP
 
@@ -355,6 +374,30 @@ First step that needs SDL3. It's built locally into `third_party/` by a script, 
 - **Done when:** Edit a German string, see it in-game live
 - **Depends on:** M3.10
 
+### M3.12 Touch and gesture input model
+- **Goal:** Multi-touch, gestures, virtual joystick/buttons, safe areas (device testing comes in M6).
+- **Packages/files:** `pc-input-touch*`, `pc-ui-virtual_controls*`
+- **Contracts/tests:** Gesture recogniser state machine with contracts; mouse-emulated touch tests
+- **Verify:** `./bin/poncelet demo touch --emulate-touch`
+- **Done when:** Pinch/swipe/virtual stick work with mouse emulation
+- **Depends on:** M3.7
+
+### M3.13 Pc.Random, replays, golden replay tests
+- **Goal:** Seeded RNG with sub-seeds; record and verify `.preplay` files.
+- **Packages/files:** `src/core/pc-random*`, `pc-replay*`, `tests/replays/*`
+- **Contracts/tests:** PCG32 state explicit; playback reports the first divergent frame/system
+- **Verify:** `./bin/poncelet replay verify tests/replays/platformer_001.preplay`
+- **Done when:** `REPLAY OK` (all checkpoint hashes match); a tampered replay reports the divergent frame
+- **Depends on:** M3.8
+
+### M3.14 Autoplayer + batch sim + F9 reports
+- **Goal:** Automated players and long batch runs that write per-game reports and a summary (Robert's F9-style reports).
+- **Packages/files:** `pc-autoplay*`, `pc-report*`, `src/cli/pc-cli-sim.adb`, F9 hotkey in runtime
+- **Contracts/tests:** Report schema (JSON) + Markdown; metrics registered by the game
+- **Verify:** `./bin/poncelet sim samples/platformer --games 10 --frames 36000 --world-seed-range 1..10 --ai-seed 7 --out /tmp/reports`
+- **Done when:** 10 report files + `summary.md`; pressing F9 in a running game writes the same report format
+- **Depends on:** M3.13
+
 ## M4 — Export + tooling
 
 ### M4.1 Data pack `.ppak`
@@ -420,6 +463,30 @@ First step that needs SDL3. It's built locally into `third_party/` by a script, 
 - **Verify:** `./bin/poncelet export --profile minimal ...`
 - **Done when:** Smaller binary; game still runs
 - **Depends on:** M4.2
+
+### M4.9 Compatibility renderer (2D)
+- **Goal:** OpenGL 3.3 / GLES 3.0 / WebGL2 renderer for 2D with the shared render graph.
+- **Packages/files:** `src/services/render/compat/*`, SPIRV-Cross shader output to GLSL 330/ES 300
+- **Contracts/tests:** Golden screenshots equal to the high-end tier within tolerance
+- **Verify:** `./bin/poncelet run samples/platformer --renderer compat`
+- **Done when:** Same picture as the high-end renderer on Mint
+- **Depends on:** M3.4
+
+### M4.10 Web export (2D)
+- **Goal:** Export 2D games to WebAssembly with WebGL2, WebAudio, DOM input, IndexedDB saves.
+- **Packages/files:** `src/platform/web/*`, `tools/export_web.sh`, `web/template/*`
+- **Contracts/tests:** Replay hash identical to native
+- **Verify:** `./bin/poncelet export --target web samples/platformer /tmp/web && python3 -m http.server -d /tmp/web 8000`
+- **Done when:** Game plays at http://localhost:8000 in Firefox/Chrome; same replay hash as native
+- **Depends on:** M1.10, M4.9
+
+### M4.11 Cross-platform determinism in CI
+- **Goal:** Golden replays verified on Linux, Windows, macOS, and web.
+- **Packages/files:** `.github/workflows/replays.yml`
+- **Contracts/tests:** Fixed-point modes bit-exact; float modes within the documented tolerance
+- **Verify:** (CI)
+- **Done when:** All platforms report identical checkpoint hashes for fixed-point replays
+- **Depends on:** M4.3, M4.10, M3.13
 
 ## M5 — 3D foundation + CSG
 
@@ -593,6 +660,38 @@ First step that needs SDL3. It's built locally into `third_party/` by a script, 
 - **Done when:** Replay hash matches
 - **Depends on:** M6.1–M6.9
 
+### M6.12 Mobile renderer tier
+- **Goal:** Single-pass forward renderer with per-object light limits, tile-friendly passes, ASTC/ETC2.
+- **Packages/files:** `src/services/render/mobile/*`
+- **Contracts/tests:** Light limits as ranged subtypes; golden screenshots
+- **Verify:** `./bin/poncelet run templates/3d_demo --renderer mobile`
+- **Done when:** Runs on Mint with the mobile tier; looks as specified
+- **Depends on:** M5.3
+
+### M6.13 Compatibility renderer 3D + web 3D
+- **Goal:** 3D subset on GL/WebGL2 and web export of 3D games.
+- **Packages/files:** `src/services/render/compat/3d*`
+- **Contracts/tests:** Unsupported features produce editor warnings, not crashes
+- **Verify:** `./bin/poncelet export --target web templates/3d_demo /tmp/web3d`
+- **Done when:** 3D template plays in the browser
+- **Depends on:** M4.10, M6.12
+
+### M6.14 Android dev builds
+- **Goal:** Debug APK with lifecycle, touch, sensors, Vulkan/GLES fallback (unsigned, no store).
+- **Packages/files:** `src/platform/android/*`, `tools/export_android.sh`, Gradle template
+- **Contracts/tests:** Suspend/resume saves state; context loss handled
+- **Verify:** `./bin/poncelet export --target android templates/3d_demo /tmp/apk && adb install /tmp/apk/game-debug.apk`
+- **Done when:** Game runs on an Android phone or the emulator
+- **Depends on:** M6.12, M3.12
+
+### M6.15 iOS CI compile
+- **Goal:** GNAT-LLVM arm64-apple-ios build of runtime + template in CI (no device, no signing).
+- **Packages/files:** `.github/workflows/ios.yml`, `src/platform/ios/*`
+- **Contracts/tests:** Core portability rules hold for iOS
+- **Verify:** (CI)
+- **Done when:** iOS build artifact compiles and links
+- **Depends on:** M6.12
+
 ## M7 — Advanced features
 
 ### M7.1 Dynamic GI: voxel volumes
@@ -630,7 +729,7 @@ First step that needs SDL3. It's built locally into `third_party/` by a script, 
 ### M7.5 Replication + typed remote calls
 - **Goal:** Snapshots/deltas, interest management, generated RPC stubs with contracts.
 - **Packages/files:** `pc-net-replication*`, `tools/rpcgen`
-- **Contracts/tests:** Payload contracts checked on receive
+- **Contracts/tests:** Payload contracts checked on receive; desync detection reuses replay checkpoint hashes (M3.13)
 - **Verify:** `./bin/poncelet run templates/mp_demo --instances 2`
 - **Done when:** Two instances see each other move
 - **Depends on:** M7.4
@@ -666,6 +765,30 @@ First step that needs SDL3. It's built locally into `third_party/` by a script, 
 - **Verify:** `./run-tests.sh mp`
 - **Done when:** `PASS mp`
 - **Depends on:** M7.5
+
+### M7.10 Asset/plugin package format + library client
+- **Goal:** Install, update, and remove packages (templates, assets, plugins) from curated index, local folders, or Workshop; licences shown.
+- **Packages/files:** `pc-packages*`, `src/editor/library*`
+- **Contracts/tests:** Licence field mandatory; attributions written to THIRD_PARTY_NOTICES
+- **Verify:** `./bin/poncelet package install samples/packages/demo_assets.ponpack --project /tmp/g`
+- **Done when:** Package installed; licence and attribution recorded
+- **Depends on:** M4.5
+
+### M7.11 XR preparation
+- **Goal:** Multi-view render graph, XR camera components, action mapping hooks (no OpenXR yet).
+- **Packages/files:** `pc-render-graph` multiview, `pc-xr-types*`
+- **Contracts/tests:** Stereo view count as a ranged subtype
+- **Verify:** `./bin/poncelet demo stereo`
+- **Done when:** Side-by-side stereo preview renders correctly
+- **Depends on:** M6.12
+
+### M7.12 Controller-first UI focus navigation
+- **Goal:** Focus graph for gamepad/remote navigation (console- and TV-friendly).
+- **Packages/files:** `pc-ui-focus*`
+- **Contracts/tests:** Every focusable widget is reachable (test)
+- **Verify:** `./bin/poncelet demo ui --gamepad`
+- **Done when:** Whole demo UI usable with a gamepad only
+- **Depends on:** M2.4
 
 ## M8 — Beta, maturity gate, platforms + Steam
 
@@ -727,20 +850,80 @@ No sign-ups before step M8.6 (Robert's decision).
 - **Done when:** Signed builds install on real macOS/Windows hardware
 - **Depends on:** M8.6
 
-### M8.8 Store + depots
-- **Goal:** SteamPipe, store page in seven languages, EULA.
-- **Packages/files:** `steam/*.vdf`
+### M8.8 Mobile store packaging + signing
+- **Goal:** Signed Android AAB for Google Play; iOS device builds, signing, and TestFlight/App Store (needs Mac access + Apple account).
+- **Packages/files:** `tools/export_android.sh --release`, `tools/export_ios.sh`
+- **Contracts/tests:** —
+- **Verify:** (CI + Mac)
+- **Done when:** Signed builds install on real devices
+- **Depends on:** M8.6, M6.14, M6.15
+
+### M8.9 Steam store + depots + curated packs
+- **Goal:** SteamPipe, store page in seven languages, EULA, curated paid template packs as DLC.
+- **Packages/files:** `steam/*.vdf`, `packs/*`
 - **Contracts/tests:** —
 - **Verify:** (CI)
-- **Done when:** Private branch installs from Steam
+- **Done when:** Private branch installs from Steam; DLC packs install
 - **Depends on:** M8.7
 
-### M8.9 Release
-- **Goal:** Steam review and launch.
+### M8.10 Release
+- **Goal:** Steam review and launch of the editor; mobile/web export available to users.
 - **Packages/files:** —
 - **Contracts/tests:** —
 - **Verify:** —
 - **Done when:** **Poncelet Editor + template packs on sale**
+- **Depends on:** M8.8, M8.9
+
+## M9 — Post-launch (outlook)
+
+Planned after launch. Steps are coarser and will be refined then.
+
+### M9.1 OpenXR VR/AR
+- **Goal:** PC VR via Vulkan, standalone Android headsets via the mobile tier, hand tracking, passthrough.
+- **Packages/files:** `src/platform/xr/*`
+- **Contracts/tests:** XR input mapped to actions
+- **Verify:** `./bin/poncelet run samples/xr_demo --xr`
+- **Done when:** Demo runs on an OpenXR runtime (e.g. Monado/SteamVR)
+- **Depends on:** M7.11
+
+### M9.2 BiDi/RTL text + UI mirroring
+- **Goal:** Unicode BiDi, RTL shaping, mixed-direction editing, mirrored layouts; Arabic/Hebrew test catalogs.
+- **Packages/files:** `pc-text-bidi*`, `pc-ui` mirroring
+- **Contracts/tests:** BiDi algorithm conformance tests (Unicode test files)
+- **Verify:** `./run-tests.sh bidi`
+- **Done when:** `PASS bidi`; RTL demo UI mirrors correctly
+- **Depends on:** M2.4
+
+### M9.3 Community asset library service
+- **Goal:** Hosted index with publishing, moderation, malware scanning for plugins, ratings, licences; optional paid assets.
+- **Packages/files:** separate service repo (TBD)
+- **Contracts/tests:** Licence policy enforced on upload
+- **Verify:** (service)
+- **Done when:** Users can publish and install community packages from the editor
+- **Depends on:** M7.10
+
+### M9.4 Console partner kit
+- **Goal:** Documentation and test suite for porting partners; platform-service conformance tests.
+- **Packages/files:** `docs/CONSOLE_PORTING.md`, `tests/platform_conformance/*`
+- **Contracts/tests:** Conformance suite passes on all public platforms
+- **Verify:** `./run-tests.sh conformance`
+- **Done when:** Kit ready to hand to a partner under NDA
+- **Depends on:** M7.12
+
+### M9.5 WebGPU path
+- **Goal:** Mobile tier on WebGPU for web (and WebXR later).
+- **Packages/files:** `src/services/render/webgpu/*`
+- **Contracts/tests:** Golden screenshots
+- **Verify:** (browser)
+- **Done when:** 3D template runs with WebGPU in Chrome/Firefox
+- **Depends on:** M6.13
+
+### M9.6 Mobile store services
+- **Goal:** Optional IAP, ads, notifications modules behind platform-service interfaces.
+- **Packages/files:** `src/services/store/*`
+- **Contracts/tests:** No SDK linked unless enabled
+- **Verify:** (device)
+- **Done when:** Sample IAP flow in a test store
 - **Depends on:** M8.8
 
 ## Definition of done for a milestone

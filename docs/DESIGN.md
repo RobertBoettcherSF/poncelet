@@ -1,7 +1,7 @@
-# Poncelet Engine — Design Document (Draft 0.6)
+# Poncelet Engine — Design Document (Draft 0.7)
 
 > Name: **Poncelet** (chosen 2026-11-19, after Jean-Victor Poncelet, projective geometry; see `docs/NAME_CHECK.md`).
-> Author: Robert Boettcher, with Grok Bot. Status: draft 0.6, 2026-11-19 (multiplayer, dynamic GI, video, visual shaders and CSG moved into the first sellable release; step plan in docs/IMPLEMENTATION_PLAN.md; Godot parity audit + matrix in Appendix A; full 2D + 3D; editor is the first Steam product; Linux-first development, Steam/Apple deferred; AI-tool support is a core feature).
+> Author: Robert Boettcher, with Grok Bot. Status: draft 0.7, 2026-11-19 (games target all platforms: desktop, web, Android, iOS, consoles via partners, XR; renderer tiers; RTL later; community asset library; multiplayer, dynamic GI, video, visual shaders and CSG moved into the first sellable release; step plan in docs/IMPLEMENTATION_PLAN.md; Godot parity audit + matrix in Appendix A; full 2D + 3D; editor is the first Steam product; Linux-first development, Steam/Apple deferred; AI-tool support is a core feature).
 > Clean-room: Godot (MIT) was studied **for architecture only**. No Godot code, text, or assets are copied here.
 > Everything below describes our own design.
 
@@ -9,18 +9,20 @@
 
 ## 1. Vision
 
-A commercial **desktop game engine and editor with its core in Ada**, aiming to be **as capable as Godot in both 2D and 3D**.
-The **first Steam product is the Poncelet editor itself** (sold as a Steam software/tool), bundled with starter
-**template packs**. Games made with it ship on **Steam** for
-**Windows, macOS, and Linux** in **seven UI languages**. Its game logic is written so that the parts that
+A commercial **game engine and editor with its core in Ada**, aiming to be **as capable as Godot in both 2D and 3D**.
+The **editor is a desktop application** (Windows, macOS, Linux), and the **first Steam product is the editor itself**
+(sold as Steam software), bundled with starter **template packs**. **Games made with Poncelet target all platforms:**
+desktop (Steam and elsewhere), **web (Ada → WebAssembly)**, **Android and iOS**, **consoles via third-party porting
+partners**, and **VR/AR via OpenXR**, in **seven UI languages**. Its game logic is written so that the parts that
 matter (simulation, rules, save files, maths) can later be **proven with SPARK without being rewritten**.
 
 What makes it different:
 
 1. **Correctness first.** The core is Ada 2012/2022 with contracts. Selected packages graduate to SPARK.
    Determinism (fixed-timestep simulation) makes replays, save files, and tests reliable.
-2. **Thin, replaceable platform layer.** Windowing, GPU, audio, input, and Steam sit behind small Ada interfaces
-   that bind to stable C APIs. The core never depends on them.
+2. **Thin, replaceable platform layer.** Windowing, GPU, audio, input, storage, and store services (Steam,
+   mobile stores, consoles) sit behind small Ada interfaces. The core never depends on them, which is what makes
+   web, mobile, console, and XR targets possible (§10.4).
 3. **Editor as product.** The editor is first-class, with polished UX and a UI localised in all seven languages.
    It isn't a developer-only tool.
 4. **Templates.** Robert's existing games (built with other bots) become template packs a user can pick,
@@ -31,8 +33,30 @@ What makes it different:
 
 ## 2. Scope and non-goals
 
+### Editor hosts vs. game targets (corrected 2026-11-19)
+- **Editor hosts:** desktop only — Windows 10/11 x86-64, macOS 12+ (universal), Linux x86-64. The editor is
+  primarily used on desktop, and a mobile or browser editor isn't planned.
+- **Game export targets:** **all platforms.**
+
+| Target | Toolchain / API | Renderer tier (§6.2a) | Placement |
+|---|---|---|---|
+| Windows, macOS, Linux | GNAT native, SDL3, SDL_GPU (D3D12/Metal/Vulkan) | High-end (low-end PCs: compatibility) | M1–M4; signed store builds M8 |
+| Web (browser) | Ada → WebAssembly (GNAT-LLVM wasm toolchain; details refined with the Roguelike Jungle bot, the one with Ada-to-WASM experience), WebGL2 (WebGPU later) | Compatibility (WebGPU: mobile tier later) | Toolchain spike M1, 2D M4, 3D M6, WebGPU M9 |
+| Android (arm64, x86-64) | GNAT cross / GNAT-LLVM + Android NDK, SDL3, Vulkan or GLES3 | Mobile (old devices: compatibility) | Dev builds M6; Play Store signing M8 (gated) |
+| iOS / iPadOS (arm64) | GNAT-LLVM arm64-apple-ios + Xcode toolchain, SDL3, Metal | Mobile | CI compile M6; device builds and App Store M8 (gated on Mac + Apple account) |
+| Consoles | Third-party porting partners under platform NDAs; console-friendly platform layer from M0 | Partner-provided backend | Post-launch (M9), partner-driven |
+| VR/AR (OpenXR) | OpenXR loader, Vulkan path (PC VR) and Android (standalone headsets) | High-end / mobile with stereo views | Render hooks M7, OpenXR M9 |
+
+**Why this placement:**
+- **Web is pre-launch.** Robert's Roguelike Jungle bot already builds an Ada game to WebAssembly (Robert's other
+  bots, such as Hood Simulator and Colony4X, build JavaScript games), githack can host web
+  builds for demos, and web export is a strong selling point for the editor.
+- **Android and iOS are pre-launch as dev builds** (M6), so mobile constraints shape the renderer and input early.
+  Store signing waits for the sign-up gate in M8, like Steam and Apple.
+- **Consoles and XR are post-launch.** Console SDKs are NDA-only and partner-driven. XR needs the finished 3D
+  renderer and the mobile tier. The architecture is prepared for both before launch.
+
 ### In scope (v1 = first sellable editor release)
-- Desktop targets: Windows 10/11 x86-64, macOS 12+ (universal: arm64 + x86-64), Linux x86-64 (Steam Linux Runtime).
 - **Full 2D and full 3D, designed together from the start** (target: feature parity with Godot for typical indie
   games). 2D: sprites, tilemaps, 2D lights/shadows, particles, 2D physics. 3D: PBR, glTF import, lights and shadows,
   3D physics, skeletal animation, navigation. One architecture, one scene format, one editor.
@@ -41,17 +65,19 @@ What makes it different:
 - UI languages: **English (source), German, French, Russian, Simplified Chinese, Spanish, Italian**, for both
   the editor and games.
 - **The editor is the product:** project manager, 2D and 3D viewports, inspector, asset pipeline, localisation
-  editor, play-in-editor, exporter for all three OSes, and template browser.
+  editor, play-in-editor, exporter for desktop, web, Android, and iOS (consoles via partners), and an asset library
+  browser (curated paid template packs at launch, community library post-launch, §13.3).
 - **Template packs** bundled with the editor. Their contents will be decided later with Robert's other game bots.
 - Steamworks: for the editor product (achievements optional, Workshop for template packs later) and as a ready
   integration for users' games (achievements, stats, cloud saves, rich presence, overlay, language).
 
 ### Non-goals (for now)
-- Mobile, consoles, VR/XR, and **Steam Deck-specific optimisation**. The Linux build will very likely run on Deck,
-  because Deck runs ordinary Linux/Proton builds. We just won't tune controls, UI scale, or performance for it.
+- **A mobile or browser version of the editor** (the editor is a desktop application).
+- **Steam Deck-specific tuning** in v1. Linux and Proton builds run on Deck, and controller-first UI from the console
+  rules (§10.4) helps.
 - A general-purpose scripting VM such as a GDScript equivalent. Game logic is Ada, compiled in (see §6.6).
-- Godot features that only matter off-desktop (mobile, web export, XR) and Godot's scripting languages (GDScript, C#).
-  Goal: **functional equivalence with Godot 4.x for desktop games.** Every Godot capability is either planned with a
+- Godot's scripting languages (GDScript, C#): game code is Ada.
+  Goal: **functional equivalence with Godot 4.x for games on all platforms.** Every Godot capability is either planned with a
   milestone or listed as an intentional difference in the **parity matrix (Appendix A)**. The first sellable
   release (M8) includes the core **plus high-level multiplayer, dynamic GI, video playback, the visual shader
   editor, and CSG** (decided 2026-11-19). Only the long tail is post-launch (M9).
@@ -107,7 +133,8 @@ shaping, codecs), `editor/` (built on the engine's own GUI), and `main/` (boot, 
 |  Jolt (C shim) | cgltf | KTX/Basis | Steamworks flat C API      |
 |  stb_image | Opus/Vorbis | meshoptimizer                        |
 +---------------------------------------------------------------+
-| OS: Windows (D3D12/Vulkan) | macOS (Metal) | Linux (Vulkan)   |
+| Desktop (D3D12/Vulkan/Metal/GL) | Web (WASM + WebGL2/WebGPU)     |
+| Android (Vulkan/GLES3) | iOS (Metal) | Consoles (partners) | XR |
 +---------------------------------------------------------------+
 ```
 
@@ -190,6 +217,23 @@ be composited in the same frame: a 2D canvas over or under a 3D world, and 3D in
   resources (meshoptimizer for vertex cache and LODs, MikkTSpace tangents, KTX2/Basis texture compression).
   Imported scenes become `.pscene` sub-scenes that can be re-imported without losing user overrides.
 - Also supported: OBJ (static) and image formats via stb_image. FBX is out of scope (users convert via Blender).
+
+### 6.2a Renderer tiers (one scene, three renderers)
+Like Godot, Poncelet has **three renderers behind one render service**. Scenes, materials, and the render graph are
+shared, and each renderer implements the same `Render_Method` interface. Projects choose a default tier per export
+target, and users can switch at runtime where it makes sense.
+
+| Tier | Backend | Targets | Features |
+|---|---|---|---|
+| **High-end ("Clustered")** | SDL_GPU: D3D12, Vulkan, Metal | Desktop, PC VR | Everything in §6.2: clustered forward+, compute particles, dynamic GI, volumetric fog, SSR/SSIL, TAA/FSR |
+| **Mobile** | SDL_GPU: Vulkan (Android), Metal (iOS/Apple Silicon); WebGPU later | Phones, tablets, standalone XR, mid-range PCs | Single-pass forward with per-object light limits (e.g. 8 omni + 8 spot), fewer post effects, baked GI and light probes, half-res effects, ASTC/ETC2 textures, tile-friendly passes (no expensive full-screen copies) |
+| **Compatibility** | OpenGL 3.3 core / OpenGL ES 3.0 / **WebGL2** through SDL3 GL contexts (Emscripten on web) | Web, old or low-end PCs, older Android devices | Forward rendering, limited lights, lightmaps, basic shadows, MSAA/FXAA, 2D fully supported, no compute-dependent effects |
+
+- The shader dialect compiles to SPIR-V/MSL/DXIL (high-end/mobile) and to **GLSL 330 / GLSL ES 300** (compatibility)
+  via SPIRV-Cross. Materials declare which features they need, and the editor warns when a material uses a feature
+  the target tier lacks, then falls back where it can.
+- **2D is identical on all tiers.** 3D degrades gracefully: unsupported effects are disabled with an editor warning.
+- **Order:** high-end first (M1/M5); compatibility 2D in M4 (needed for web); compatibility 3D and mobile tier in M6.
 
 ### 6.3 World / ECS (`Pc.World`)
 - `Entity_Id` is a generational handle. Entities live in a bounded slot table (capacity set per game at
@@ -287,6 +331,10 @@ Godot users expect "edit a script, see it immediately". We match that without an
 ### 6.9 Input
 - Action mapping (`"move_left"`, `"confirm"`) with rebinding, keyboard/mouse and gamepads via SDL3.
   Steam Input works transparently through SDL. Rebinding UI is localised.
+- **Touch and mobile input:** multi-touch, gestures (tap, swipe, pinch, rotate), virtual joystick and buttons as UI
+  widgets, accelerometer and gyro, safe-area insets, on-screen keyboard. The input model is designed for this in M3
+  and shipped on devices in M6. On the web, DOM events are mapped by the platform layer.
+- **XR input:** OpenXR action sets map onto the same action system (M9).
 
 ### 6.10 UI (runtime)
 - Our own retained-mode UI in Ada: layouts (box, grid, anchors), widgets (label, button, slider, list,
@@ -339,6 +387,37 @@ Godot users expect "edit a script, see it immediately". We match that without an
   spawning, and opening URLs.
 - **Production:** video playback (Theora or AV1), deterministic movie capture, runtime loading of user content,
   mod/DLC packs, an object/memory profiler, Tracy integration, and shell completion.
+
+### 6.15 Seeded, replayable simulation, automated players, and batch reports
+Requested by Robert's Hood Simulator and Colony4X bots, based on their experience with long-running simulation games.
+- **Seeds:** every run has an explicit **world seed** (map and content generation, world events) and a separate
+  **AI seed** (decisions of AI-controlled actors), plus optional per-system sub-seeds derived deterministically
+  (`Derive (Seed, System_Tag)`). RNG is `Pc.Random` (PCG32/xoshiro with explicit state, a SPARK candidate). No global
+  RNG, no wall-clock time, and no unordered iteration in simulation code.
+- **Exactly replayable headless simulation:** the fixed-step simulation is a pure function of
+  (scene/save, world seed, AI seed, input stream, engine version). `poncelet run --headless --world-seed W --ai-seed A
+  --frames N` always prints the same world hash on the same platform. Cross-platform bit-exactness is a goal for
+  fixed-point game modes (§6.1) and is checked in CI on Linux/Windows/macOS.
+- **Replays:** input streams (player actions per frame) plus seeds and periodic state hashes are recorded to a
+  text-based `.preplay` file (canonical JSON header + compact per-frame action lines). Playback verifies every
+  recorded hash and reports the **first divergent frame and system** on desync.
+- **Automated players:** an `Autoplayer` interface (Ada) lets a game supply bot strategies that drive the same action
+  system as humans. Templates ship a simple autoplayer so they can be soak-tested.
+- **Batch simulation mode:** `poncelet sim <project|scene> --games 100 --frames 216000 --world-seed-range 1..100
+  --ai-seed 7 --autoplayer default --out reports/` runs many long games headless (in parallel processes) and writes:
+  - one **report file per game** (JSON + human-readable Markdown), in the spirit of Robert's **F9-style debug
+    reports**: seeds, engine and game version, duration, final and periodic stats/metrics declared by the game
+    (`Report_Metric` registrations), events timeline, warnings, contract failures with locations, performance
+    counters, and the final world hash;
+  - a **batch summary** (aggregates, distributions, outliers, failed or desynced runs with replay files attached).
+- **In-game debug report (F9):** a runtime hotkey (default F9, rebindable) and the MCP tool `debug_report` dump the
+  same report format from a live session, including seeds and a replay of the last N minutes.
+- **Replay tests:** golden replays in `tests/replays/` run in CI and through `poncelet test --replays`. Each one
+  checks the hash at checkpoints, so engine changes that break determinism or gameplay are caught immediately.
+  Templates include at least one golden replay.
+- **Milestones:** seeds and the headless hash in M0; `Pc.Random`, replay record/playback, replay tests, the
+  autoplayer interface, `poncelet sim` batch reports, and the F9 report in M3; CI cross-platform determinism
+  checks in M4; multiplayer desync detection reuses the same hashes in M7.
 
 ## 7. Third-party components (all compatible with a closed, commercial product)
 
@@ -417,6 +496,11 @@ back to the OS locale (SDL3 `SDL_GetPreferredLocales`) when Steam isn't running,
   Shaping uses HarfBuzz. Font fallback chain per locale: `zh-Hans → [Noto SC, Noto Sans]`.
 - Number and date formatting per locale lives in `Pc.I18n.Format`, a small CLDR subset (decimal and grouping
   separators, ordering).
+- **Right-to-left (BiDi) text: documented later milestone (M9).** None of our seven languages needs it, but games may
+  add Arabic, Hebrew, or Persian. Plan: the Unicode BiDi algorithm via SheenBidi or FriBidi (or our own Ada
+  implementation, a SPARK candidate), HarfBuzz RTL shaping, cursor and selection in mixed-direction text, and automatic
+  UI mirroring (containers flip, icons with a "mirror" flag). **Preparation from M2:** text is stored in logical order,
+  layout uses start/end instead of left/right, and no code assumes left-to-right.
 
 ## 9. SPARK-readiness coding rules (Plain Ada now, SPARK later)
 
@@ -445,6 +529,9 @@ These rules apply to everything in `pc-core` and are recommended in game code.
     candidate packages: `Pc.Math`, `Pc.Serial`, `Pc.I18n.Plural`, and `Pc.Physics.Broadphase_2D`.
 11. Mark packages with `pragma SPARK_Mode (On)` as soon as they pass flow analysis. The goal is that
     "SPARK later" means adding `Global`, `Depends`, and loop invariants, not refactoring.
+12. **Portability restrictions for `pc-core`** (enforced by a configuration-pragmas file `core.adc`): no tasking,
+    no allocators, no direct OS or file access, and no dependence on exception propagation. This keeps the core
+    usable on WebAssembly, iOS, consoles, and restricted Ada runtimes. Threads, files, and time come from services.
 
 ## 10. Build, packaging, and Steam
 
@@ -495,6 +582,43 @@ These rules apply to everything in `pc-core` and are recommended in game code.
 - Features by milestone: init/restart-check, overlay, language, achievements, stats, Cloud saves,
   rich presence (all in M7), workshop for template and mod sharing (later).
 
+### 10.4 Web, mobile, console, and XR export
+
+**Web (Ada → WebAssembly).** Of Robert's game bots, **only Roguelike Jungle has Ada-to-WASM experience**.
+Hood Simulator and Colony4X are JavaScript games. **Toolchain details will be refined in the group chat, based on
+Roguelike Jungle's setup.** Baseline plan:
+- GNAT-LLVM targeting `wasm32` (Emscripten or a WASI-based setup, whichever those bots have proven), with a
+  restricted Ada runtime. `pc-core` already follows the portability rules (§9 rule 12).
+- Rendering: compatibility renderer on WebGL2 (M4 2D, M6 3D). WebGPU via the mobile tier later (M9).
+- Audio: WebAudio with an AudioWorklet feeding the Ada mixer. Input: DOM keyboard, mouse, touch, and Gamepad API
+  events. Saves: IndexedDB. Data: `.ppak` streamed via fetch, with progress UI.
+- Threads: single-threaded by default. Optional SharedArrayBuffer threads when the host sends COOP/COEP headers.
+- Hosting: static files, so exports can be demoed through githack links or any static host.
+
+**Android and iOS.**
+- Toolchains: GNAT cross (aarch64-linux-android) or GNAT-LLVM with the NDK for Android, and GNAT-LLVM for
+  arm64-apple-ios. Both are validated by CI spikes early (M1/M6). SDL3 provides windowing, touch, and lifecycle on both.
+- App lifecycle: pause/resume/background as engine events, save on suspend, GPU context-loss handling, and
+  orientation and safe areas.
+- Packaging: Android APK/AAB via Gradle templates. iOS Xcode project export, built on macOS.
+- **Gated:** Play Store signing and Apple App Store submission come in M8 after the sign-up gate, like Steam.
+  Unsigned debug APKs can run on an Android phone or emulator earlier (M6).
+
+**Consoles (third-party partners).** As with Godot, console ports are done by licensed partners under
+platform NDAs, in the style of W4 Games. Platform SDKs never enter this public repo. To stay console-friendly from M0:
+- static linking, and no runtime code loading in shipped builds (hot reload is editor-only);
+- all OS access through services, with fixed memory budgets and fixed-capacity containers in the core;
+- controller-first UI navigation (focus graph) and suspend/resume lifecycle events;
+- save data, achievements/trophies, and user accounts through a generic `Pc.Services.Platform` (Steam is one backend);
+- deterministic, assertion-checked code that helps certification.
+- Risk: partners need a GNAT/GNAT-LLVM toolchain for each console target. That's discussed with partners post-launch (M9).
+
+**XR (OpenXR).**
+- Pre-launch preparation (M7): render-graph support for multiple views (stereo/multiview), XR camera components,
+  and an action-system mapping.
+- OpenXR integration post-launch (M9): PC VR via the Vulkan path, standalone Android headsets via the mobile tier,
+  hand tracking, passthrough AR where the runtime supports it. WebXR follows WebGPU.
+
 ## 11. Editor strategy: the editor is the first product
 
 The first thing sold on Steam is **Poncelet Editor** (Steam category: Software → Game Development), bundled
@@ -531,12 +655,8 @@ with template packs. So the editor gets product-level UX, not internal-tool UX.
 **Distribution of the editor on Steam:** Windows, macOS, and Linux depots. Updates go through Steam branches
 (stable/beta). The GNAT toolchain ships as a separate depot or optional DLC-like download to keep the base install small.
 
-**Browser/WebAssembly preview for githack demos:** githack (raw.githack.com) serves static files from a public
-repo, so HTML/JS/WASM pages work there. Compiling Ada to WASM needs **GNAT-LLVM**, which is still experimental
-(projects like AdaWebPack exist), and SDL3 + emscripten + WebGPU/WebGL adds more risk.
-Recommendation: **not in v1.** For githack, publish **static HTML pages** (design docs, screenshots, GIFs or
-short videos, an interactive localisation report). Revisit a WASM build of `pc-core` with a JS renderer as an
-experiment after M4. `pc-core` being platform-free makes this possible later.
+**Web builds for githack demos:** web export (§10.4) produces static files, so exported games and template demos
+can be linked through raw.githack.com from M4 onward. The editor itself stays a desktop application.
 
 ## 12. AI-tool integration (core feature)
 
@@ -566,7 +686,8 @@ one Ada **tools API** (`Pc.Tools`) exposed three ways, so the GUI, scripts, and 
   (git-ignored).
 
 ### 12.2 Headless CLI `poncelet` (from M0/M1)
-- Commands: `new` (from template), `build`, `run`, `test`, `export`, `screenshot` (render a scene/camera to PNG
+- Commands: `new` (from template), `build`, `run` (with `--world-seed`/`--ai-seed`), `sim` (batch automated-player
+  runs writing report files, §6.15), `replay` (record/verify `.preplay`), `test` (incl. `--replays`), `export`, `screenshot` (render a scene/camera to PNG
   headlessly or offscreen), `validate`, `inspect` (scene tree, entity, component, resource, settings), `fmt`,
   `docs` (API lookup), `schema`, `mcp` (start the MCP server).
 - **Machine-readable output:** `--json` gives one JSON object (or NDJSON for streams) with a stable, versioned
@@ -585,7 +706,8 @@ one Ada **tools API** (`Pc.Tools`) exposed three ways, so the GUI, scripts, and 
   - Modify: `create_entity`, `delete_entity`, `set_component`, `add_component`, `remove_component`,
     `instantiate_scene`, `save_scene`, `set_translation` (catalog entry).
   - Run: `play` / `stop` play-in-editor, `step_frames`, `send_input` (scripted input), `capture_screenshot`,
-    `capture_frames` (short sequence), `read_logs`, `run_tests`, `build` (returns structured diagnostics).
+    `capture_frames` (short sequence), `read_logs`, `run_tests`, `build` (returns structured diagnostics),
+    `run_sim` (batch automated-player runs, §6.15), `debug_report` (F9-style report), `verify_replay`.
   - Knowledge: `api_docs` (search the generated Ada API reference including contracts), `schema`, `examples`.
 - **Resources:** project files, schemas, logs, and docs exposed as MCP resources. **Prompts:** curated task prompts
   (e.g. "add a component", "localise a scene").
@@ -666,6 +788,18 @@ chat with his other game bots. The **format and import mechanism are defined now
   engine changes don't break templates.
 - Templates can later be distributed as Steam Workshop items or DLC.
 
+### 13.3 Asset library (curated paid packs + community)
+- **Curated paid template packs** (Robert's, signed) ship at launch: bundled with the editor and as Steam DLC (M8).
+- **Asset/plugin package format and editor library client** (M7): browse, search, install, and update packages
+  (templates, assets, plugins, shaders) from configured sources: the curated index, local folders, or Steam Workshop.
+  Each package declares its licence (for example CC0, CC-BY, MIT, or proprietary/paid). The client shows licences
+  before install and records attributions in the project's `THIRD_PARTY_NOTICES`.
+- **Community asset library service** (M9, post-launch): a hosted index where users publish free or paid assets.
+  It needs moderation, malware scanning for plugins, ratings, and a licence policy. Hosting and revenue share are open
+  question 13. Steam Workshop is an alternative or complementary channel.
+- **Why post-launch:** running a moderated public service is an operations commitment that only makes sense once the
+  editor has users. The package format and client come earlier, so templates and plugins already use it.
+
 ## 14. Repository layout (planned; nothing created yet)
 
 ```
@@ -707,16 +841,19 @@ The step-by-step plan with verification commands is in **`docs/IMPLEMENTATION_PL
 
 | M | Name | Contents | Exit criterion |
 |---|---|---|---|
-| **M0** | Skeleton + CLI | gprbuild projects (Alire optional), `pc-core` (Math 2D+3D, World tables, i18n catalogs with plurals, text scene round-trip), coding rules, LICENSE, `AGENTS.md`. **`poncelet` CLI v0:** `version`, `new`, `validate`, `run --headless`, `test`, `--json`, `--lang`. CI: Linux build+tests, Windows/macOS compile | `./build.sh` + `./run-tests.sh` green on Linux Mint; `poncelet run --headless` prints a deterministic hash |
-| **M1** | Pixels + formats | Local SDL3 build script, SDL3 binding, window/input, SDL_GPU render core + render graph, 2D batcher, fixed-step loop, offline shader pipeline. **All text formats + JSON Schemas** (`.pscene`, `.pres`, `.pimport`, `.ponpack`), canonical writer; CLI `screenshot`, `inspect`, `fmt`, `schema` | A sprite moves at 60 Hz on Mint; `poncelet screenshot` writes a PNG; schemas validate samples |
+| **M0** | Skeleton + CLI | gprbuild projects (Alire optional), `pc-core` (Math 2D+3D, World tables, i18n catalogs with plurals, text scene round-trip), coding rules, LICENSE, `AGENTS.md`. **`poncelet` CLI v0:** `version`, `new`, `validate`, `run --headless`, `test`, `--json`, `--lang`. CI: Linux build+tests, Windows/macOS compile; **portability rules** (`core.adc`: no tasking/allocators/OS access in core; console-friendly service boundaries); `run --headless --world-seed --ai-seed` (seeded, exactly replayable) | `./build.sh` + `./run-tests.sh` green on Linux Mint; `poncelet run --headless` prints a deterministic hash |
+| **M1** | Pixels + formats | Local SDL3 build script, SDL3 binding, window/input, SDL_GPU render core + render graph, 2D batcher, fixed-step loop, offline shader pipeline. **All text formats + JSON Schemas** (`.pscene`, `.pres`, `.pimport`, `.ponpack`), canonical writer; CLI `screenshot`, `inspect`, `fmt`, `schema`; **WebAssembly toolchain spike** (headless core in the browser/Node, same hash as native); render service with a `Render_Method` interface for three tiers | A sprite moves at 60 Hz on Mint; `poncelet screenshot` writes a PNG; schemas validate samples |
 | **M2** | World, UI, i18n, MCP | Generic component stores, hierarchy, events/tags, FreeType/HarfBuzz text + CJK fonts, pseudo-locale, UI toolkit (containers, widgets, themes, docking), editor shell + project manager, undo system, **MCP server v1**, generated API docs, GNATprove flow in CI | Editor shell switches live between seven languages; an AI client creates an entity via MCP and it can be undone |
-| **M3** | 2D complete + hot reload | Own Ada 2D physics, 2D lights/shadows, tilemaps + terrains, particles, animation + tweens, audio mixer v1, save/load, input rebinding, rich text, **game-library hot reload**, editor 2D viewport, inspector, asset import, localisation editor, play-in-editor | A 2D template game built and live-edited entirely in the editor |
-| **M4** | Export + tooling | Exporter with `.ppak` (Linux tested on Mint; Windows/macOS built in CI, unsigned), Steam stub, template-pack import, profiler + Tracy, movie capture, module-stripped exports | Exported 2D template runs on Mint; Windows/macOS CI artifacts pass smoke tests |
+| **M3** | 2D complete + hot reload | Own Ada 2D physics, 2D lights/shadows, tilemaps + terrains, particles, animation + tweens, audio mixer v1, save/load, input rebinding, rich text, **game-library hot reload**, editor 2D viewport, inspector, asset import, localisation editor, play-in-editor; input model incl. touch, gestures, and virtual controls (testable with mouse emulation); logical-order text layout (RTL-ready); **`Pc.Random`, replay record/playback (`.preplay`), golden replay tests, autoplayer interface, `poncelet sim` batch runs with per-game report files (F9-style), in-game F9 debug report** | A 2D template game built and live-edited entirely in the editor |
+| **M4** | Export + tooling | Exporter with `.ppak` (Linux tested on Mint; Windows/macOS built in CI, unsigned), Steam stub, template-pack import, profiler + Tracy, movie capture, module-stripped exports; **compatibility renderer 2D** (GL 3.3 / GLES3 / WebGL2), **web export of 2D games** (WASM + WebAudio + DOM input + IndexedDB), githack-hostable demos; cross-platform determinism checks of replays in CI | Exported 2D template runs on Mint; Windows/macOS CI artifacts pass smoke tests |
 | **M5** | 3D foundation + CSG | Clustered forward+ renderer, PBR, glTF import, cameras, lights, cascaded shadows, sky/IBL, MSAA/FXAA/TAA, Jolt 3D physics behind Ada API, 3D viewport + gizmos, primitive meshes, mesh builder, **CSG (Manifold)**, collision generation | A glTF scene with CSG blockout, lit and shadowed, with physics, editable in the editor |
-| **M6** | 3D complete + video + networking base | Skeletal animation + animation graph + IK/retargeting, lightmap baker, reflection probes, SSAO/SSIL/SSR, decals, volumetric fog, GPU particles, LOD/culling, navmesh + avoidance, GridMap, FBX import, FSR1, sockets/HTTP(S)/WebSocket, **video playback**, audio parity (buses, effects, 3D audio, adaptive music) | 3D template game playable and exportable, with an in-game video cutscene |
-| **M7** | Advanced features | **Dynamic GI** (VoxelGI-style volumes + probe-based large-world GI), **visual shader editor** (node graph → shader dialect), **high-level multiplayer** (replication, typed remote calls, ENet, UPnP, multi-instance testing, network profiler), editor plugins + C ABI extensions, accessibility (AccessKit) | A multiplayer template runs on two instances on one machine; a dynamically lit 3D scene uses node-graph materials |
-| **M8** | Beta, maturity gate, platforms + Steam (**first sellable**) | **8a Beta:** onboarding, tutorials, crash recovery, soak tests, native-speaker localisation QA, template packs finalised + signed, EULA, docs. **8b Maturity gate:** no known crashers, formats frozen. **8c Release:** Steamworks + Apple sign-ups, real Steamworks body, macOS signing/notarisation, Windows signing (optional), Steam Runtime build, real-hardware tests on macOS/Windows, SteamPipe, store page in seven languages | Steam review passed; **Poncelet Editor + template packs released** |
-| **M9** | Post-launch long tail | FSR2, texture streaming, glTF export, Workshop, mic/TTS, MIDI, webcam, WebRTC, VRS, BiDi/RTL, ARM64, dedicated-server exports, optional OpenXR, WASM experiment, own Ada 3D physics, SPARK proofs, paid template DLC | — |
+| **M6** | 3D complete + video + networking base | Skeletal animation + animation graph + IK/retargeting, lightmap baker, reflection probes, SSAO/SSIL/SSR, decals, volumetric fog, GPU particles, LOD/culling, navmesh + avoidance, GridMap, FBX import, FSR1, sockets/HTTP(S)/WebSocket, **video playback**, audio parity (buses, effects, 3D audio, adaptive music); **mobile renderer tier**, **compatibility renderer 3D**, **web 3D export**, **Android dev builds** (debug APK, lifecycle, touch, sensors), **iOS CI compile** | 3D template game playable and exportable, with an in-game video cutscene |
+| **M7** | Advanced features | **Dynamic GI** (VoxelGI-style volumes + probe-based large-world GI), **visual shader editor** (node graph → shader dialect), **high-level multiplayer** (replication, typed remote calls, ENet, UPnP, multi-instance testing, network profiler), editor plugins + C ABI extensions, accessibility (AccessKit); **asset/plugin package format + library client**; XR preparation (multi-view render graph, XR camera, action mapping); controller-first UI focus navigation | A multiplayer template runs on two instances on one machine; a dynamically lit 3D scene uses node-graph materials |
+| **M8** | Beta, maturity gate, platforms + Steam (**first sellable**) | **8a Beta:** onboarding, tutorials, crash recovery, soak tests, native-speaker localisation QA, template packs finalised + signed, EULA, docs. **8b Maturity gate:** no known crashers, formats frozen. **8c Release:** Steamworks + Apple sign-ups, real Steamworks body, macOS signing/notarisation, Windows signing (optional), Steam Runtime build, real-hardware tests on macOS/Windows, SteamPipe, store page in seven languages; **8c also:** Play Store signing/AAB, iOS device builds + App Store/TestFlight (needs Mac access + Apple account), curated paid template packs as DLC | Steam review passed; **Poncelet Editor + template packs released** |
+| **M9** | Post-launch | **OpenXR VR/AR**, **BiDi/RTL text + UI mirroring**, **community asset library service**, **console ports via partners**, WebGPU for web/mobile, mobile store services (IAP, ads, notifications), FSR2, texture streaming, glTF export, Workshop, mic/TTS, MIDI, webcam, WebRTC, VRS, ARM64 desktop, dedicated-server exports, own Ada 3D physics, SPARK proofs | — |
+
+**Platform placement (draft 0.7):** web 2D in M4 and 3D in M6, Android/iOS dev builds in M6 with store signing in
+M8 (gated), and consoles, OpenXR, RTL, and the community library post-launch in M9. Reasons are in §2 and §13.3.
 
 **Schedule realism:** this is a multi-year roadmap. Adding the five features before launch moves M8 out by roughly
 two to three milestone-lengths compared with draft 0.5. The mitigations are reusing proven C libraries (Jolt,
@@ -737,12 +874,19 @@ Manifold, ENet, dav1d/Theora, cgltf), small verifiable steps, and AI-assisted de
   editors to post-v1.
 - **Bundling GNAT with a commercial editor:** use the FSF GCC toolchain under the GCC Runtime Library Exception
   and confirm redistribution terms (GPLv3 for compiler binaries means source offer obligations for the toolchain itself).
+- **Ada toolchains for web, iOS, and consoles:** GNAT-LLVM for wasm32 and arm64-apple-ios is less mature than
+  native GNAT. Mitigations: early CI spikes (M1, M6), Roguelike Jungle's Ada-to-WASM experience, a restricted
+  runtime, and core portability rules. Console toolchains are a partner topic.
+- **Three renderers to maintain:** shared render graph, materials, and shader dialect, golden screenshots per tier
+  in CI, and a clear feature matrix with editor warnings.
+- **Store policies and sign-ups** (Google Play, Apple, console certification): all gated to M8/M9, with no accounts before the maturity gate.
 - **SDL_GPU feature ceiling for advanced 3D** (no ray tracing or mesh shaders): acceptable for v1. Revisit option C later.
 
 ## 18. Open questions for Robert
 1. ~~2D only for v1, or is 3D needed soon?~~ **Answered (2026-11-19):** Poncelet must match Godot in 2D **and** 3D.
    Ship 2D first, then 3D on the same architecture.
-2. **What engines and languages were your other bot-built games written in** (Godot/GDScript, JS, Python, Ada)?
+2. **What engines and languages were your other bot-built games written in?** *Partly answered:* Hood Simulator and
+   Colony4X are JavaScript games (so their templates are ports to Ada), and Roguelike Jungle is Ada (built to WASM).
    This decides whether templates are imports or ports. (Pack *contents* will be decided in the group chat.)
 3. ~~What do we sell first?~~ **Answered (2026-11-19):** the engine + editor as a Steam software product, bundled with
    template packs. **New, to confirm:** the end-user licence for games made with Poncelet. Proposal: users own and may
@@ -759,12 +903,21 @@ Manifold, ENet, dav1d/Theora, cgltf), small verifiable steps, and AI-assisted de
 9. Use Alire-managed toolchains (recommended for Windows and macOS), or stay on system GNAT 12.3?
 10. ~~Parity timing~~ **Answered (2026-11-19):** high-level multiplayer, dynamic GI, video playback, the visual shader
     editor, and CSG must all be in the first sellable release (M8). They're scheduled in M5–M7 and M9 is long tail only.
+11. **Android testing:** do you have an Android phone or tablet for M6 dev builds, or should we rely on the Android
+    emulator (which needs KVM on the Mint laptop)?
+12. **iOS:** iOS builds and App Store submission need a Mac (or a cloud Mac) and an Apple account, both gated to M8.
+    Is that acceptable, with CI compile-only before then?
+13. **Community asset library:** self-hosted service vs. Steam Workshop vs. both; free only or paid assets with a
+    revenue share? (Post-launch, M9.)
+14. **Web toolchain:** to be finalised from the group chat, based on Roguelike Jungle's Ada-to-WebAssembly setup (exact GNAT-LLVM/runtime
+    setup, WebGL2 vs. WebGPU first, audio approach).
 
 ## Appendix A. Godot 4.x parity matrix (audit of 2026-11-19, draft 0.5)
 
 Sources: the public Godot 4.x "List of features" documentation page and the directory layout of the Godot
 repository (`modules/`, `servers/`). Capabilities are **paraphrased in our own words**. No Godot text or code is copied.
-Draft 0.6 update: multiplayer, dynamic GI, video, the visual shader editor, and CSG were moved to pre-launch
+Draft 0.7 update: games now target all platforms (web, Android, iOS, consoles via partners, XR); three renderer
+tiers; RTL and the community asset library are scheduled post-launch. Draft 0.6 update: multiplayer, dynamic GI, video, the visual shader editor, and CSG were moved to pre-launch
 milestones (M5–M7). Everything still marked M9 is post-launch long tail.
 "0.4 status" is how DESIGN.md draft 0.4 covered each capability before this audit. The "Poncelet equivalent" column
 is the plan added in draft 0.5. Milestones refer to §16.
@@ -776,19 +929,19 @@ Legend: C = covered, P = partial, M = missing, I = intentionally different.
 
 ### A.1 Platforms
 
-| Godot capability | 0.4 | Poncelet equivalent (0.5) | Milestone |
+| Godot capability | 0.4 | Poncelet equivalent (current) | Milestone |
 |---|:-:|---|---|
 | Windows/macOS/Linux x86-64 editor + games | C | Native desktop targets; Linux-first development, Win/macOS via CI (§10) | M0–M8 |
 | ARM64 Windows/Linux, 32-bit builds | M | ARM64 Linux/Windows added when GNAT + SDL3 CI runners are available; no 32-bit | M9 |
 | macOS universal (arm64 + x86-64) | C | lipo universal app (§10.2) | M8 |
-| Android / iOS export | I | Desktop-only product; not planned | — |
-| Web (HTML5) export | I | Not a target; static HTML docs + optional WASM experiment (§11) | M9 (experiment) |
-| Consoles (via third parties) | I | Not planned | — |
+| Android / iOS export | I | Android (arm64/x86-64) and iOS (arm64) game export: mobile renderer tier, touch, sensors, app lifecycle; unsigned dev builds first, store signing gated (§10.4) | M6 (dev builds) / M8 (store signing) |
+| Web (HTML5) export | I | Ada → WebAssembly (GNAT-LLVM toolchain, refined with the Roguelike Jungle bot's Ada-to-WASM experience), WebGL2 via the compatibility renderer, WebAudio, DOM input, IndexedDB saves; WebGPU later (§10.4) | M1 (spike) / M4 (2D) / M6 (3D) / M9 (WebGPU) |
+| Consoles (via third parties) | I | Console ports by third-party partners under platform NDAs (W4-Games-style); console-friendly platform layer from M0 (§10.4) | M0 (rules) / M9 (partner ports) |
 | Headless/server mode (no GPU) | P | `poncelet run --headless` with null render/audio services; dedicated-server exports | M1 (CLI), M9 (server export) |
 
 ### A.2 Editor
 
-| Godot capability | 0.4 | Poncelet equivalent (0.5) | Milestone |
+| Godot capability | 0.4 | Poncelet equivalent (current) | Milestone |
 |---|:-:|---|---|
 | Scene tree editor, inspector | C | Scene dock + generated inspector (§11) | M2–M3 |
 | Built-in script/text editor with highlighting | P | Built-in Ada code editor (syntax highlight, ALS-driven completion, diagnostics) + external editors | M5 |
@@ -805,12 +958,12 @@ Legend: C = covered, P = partial, M = missing, I = intentionally different.
 | Offline built-in class reference | C | Generated API reference from Ada specs (§12.4) | M2 |
 | Editor localised in many languages | C | Seven languages (§8, §11) | M2 |
 | Editor plugins | M | Ada editor-plugin API (docks, inspectors, importers, gizmos, menu commands) loaded as shared libraries (§6.12) | M7 |
-| Asset library / store, download projects | P | Template packs (§13); Steam Workshop for packs/plugins later | M7 / M9 |
+| Asset library / store, download projects | P | Package format + editor library client (M7), curated paid template packs (M8), community asset library service (M9) (§13.3) | M7 / M8 / M9 |
 | Project manager | C | Project manager with templates (§11) | M2 |
 
 ### A.3 2D rendering
 
-| Godot capability | 0.4 | Poncelet equivalent (0.5) | Milestone |
+| Godot capability | 0.4 | Poncelet equivalent (current) | Milestone |
 |---|:-:|---|---|
 | Sprites, polygons, lines (Polygon2D/Line2D) | P | Sprite batcher + textured polygons and polylines with joints/caps | M1–M3 |
 | Animated sprites | C | Sprite-frame animation (§6.11) | M3 |
@@ -825,7 +978,7 @@ Legend: C = covered, P = partial, M = missing, I = intentionally different.
 
 ### A.4 2D tools
 
-| Godot capability | 0.4 | Poncelet equivalent (0.5) | Milestone |
+| Godot capability | 0.4 | Poncelet equivalent (current) | Milestone |
 |---|:-:|---|---|
 | TileMaps (layers, terrains/autotile, physics, navigation) | P | Tilemap layers, terrain auto-tiling rules, per-tile collision/nav/occluders, tile animation | M3 |
 | 2D camera smoothing and drag margins | C | Camera2D (§6.2) | M3 |
@@ -834,10 +987,10 @@ Legend: C = covered, P = partial, M = missing, I = intentionally different.
 
 ### A.5 3D rendering
 
-| Godot capability | 0.4 | Poncelet equivalent (0.5) | Milestone |
+| Godot capability | 0.4 | Poncelet equivalent (current) | Milestone |
 |---|:-:|---|---|
 | Forward+ clustered renderer | C | Clustered forward+ (§6.2) | M5 |
-| Lower-end / compatibility renderer | I | Single SDL_GPU renderer with quality presets instead of separate Mobile/GL renderers | M5 |
+| Lower-end / compatibility renderer | I | Three renderer tiers (§6.2a): compatibility renderer on OpenGL 3.3 / GLES 3.0 / WebGL2, plus a mobile tier | M4 (compat 2D) / M6 (compat 3D + mobile) |
 | Perspective / ortho / frustum-offset cameras, depth prepass | C | §6.2 | M5 |
 | Variable rate shading | M | Only if SDL_GPU exposes it; otherwise deferred | M9 |
 | PBR: diffuse/specular modes incl. toon, ORM, normal, parallax, detail maps | P | Uber-material gains toon/lambert modes, parallax occlusion, detail layers | M6 |
@@ -856,7 +1009,7 @@ Legend: C = covered, P = partial, M = missing, I = intentionally different.
 | GPU particles: sub-emitters, trails, attractors, collision (SDF/heightmap), custom shaders | P | Compute particles with sub-emitters, trails, attractors, SDF/heightfield collision | M6 |
 | CPU particles | C | §6.2 | M3 |
 | Post: tonemappers, auto exposure, DOF bokeh, SSAO, glow modes + lens dirt, LUT, BCS | C | §6.2 (+ lens dirt, BCS adjustments) | M5–M6 |
-| Texture filtering per use, VRAM compression BC/ASTC/ETC2/Basis | P | BC1–7 via KTX2/Basis transcode on desktop; ASTC/ETC2 irrelevant (desktop-only) | M5 |
+| Texture filtering per use, VRAM compression BC/ASTC/ETC2/Basis | P | BC1–7 on desktop, ASTC/ETC2 on mobile, Basis Universal/KTX2 transcoding for web and mixed targets | M5 / M6 |
 | MSAA, FXAA, TAA, SSAA, alpha-to-coverage | P | MSAA (2D+3D), FXAA, TAA, SSAA, alpha-to-coverage/hash | M5–M6 |
 | Resolution scaling + FSR1 / FSR2 upscaling | M | 3D resolution scale with bilinear/FSR1 (MIT shader); FSR2/3 via FidelityFX SDK (MIT) later | M6 / M9 |
 | LOD (auto mesh LOD), occlusion culling, visibility ranges/HLOD | C | meshoptimizer LODs, Hi-Z culling (§6.2); visibility ranges added | M6 |
@@ -865,7 +1018,7 @@ Legend: C = covered, P = partial, M = missing, I = intentionally different.
 
 ### A.6 3D tools
 
-| Godot capability | 0.4 | Poncelet equivalent (0.5) | Milestone |
+| Godot capability | 0.4 | Poncelet equivalent (current) | Milestone |
 |---|:-:|---|---|
 | Built-in primitive meshes | M | Primitive mesh generators (box, sphere, capsule, cylinder, torus, plane…) | M5 |
 | GridMap (3D tiles) | M | 3D tile grid component + palette painter in editor | M6 |
@@ -877,7 +1030,7 @@ Legend: C = covered, P = partial, M = missing, I = intentionally different.
 
 ### A.7 Physics
 
-| Godot capability | 0.4 | Poncelet equivalent (0.5) | Milestone |
+| Godot capability | 0.4 | Poncelet equivalent (current) | Milestone |
 |---|:-:|---|---|
 | 2D: static/animatable/rigid/character bodies, areas, joints | C | Own Ada 2D physics (§6.4) | M3 |
 | 2D shapes incl. world boundary, collision polygons from sprites | P | Add world-boundary plane and sprite-outline polygon generation | M3 |
@@ -890,7 +1043,7 @@ Legend: C = covered, P = partial, M = missing, I = intentionally different.
 
 ### A.8 Navigation
 
-| Godot capability | 0.4 | Poncelet equivalent (0.5) | Milestone |
+| Godot capability | 0.4 | Poncelet equivalent (current) | Milestone |
 |---|:-:|---|---|
 | A* (grid and graph) 2D/3D | P | Pc.Nav.AStar for grids and graphs (SPARK candidate) | M3 |
 | Navmesh baking editor + runtime, 2D/3D | C | §6.4 navigation | M3 / M6 |
@@ -899,7 +1052,7 @@ Legend: C = covered, P = partial, M = missing, I = intentionally different.
 
 ### A.9 Animation
 
-| Godot capability | 0.4 | Poncelet equivalent (0.5) | Milestone |
+| Godot capability | 0.4 | Poncelet equivalent (current) | Milestone |
 |---|:-:|---|---|
 | Animate any property, custom interpolation, Bézier curves | C | §6.11 | M3 |
 | Method-call and audio tracks | P | Event tracks call registered Ada handlers; audio tracks | M3 |
@@ -913,7 +1066,7 @@ Legend: C = covered, P = partial, M = missing, I = intentionally different.
 
 ### A.10 Audio
 
-| Godot capability | 0.4 | Poncelet equivalent (0.5) | Milestone |
+| Godot capability | 0.4 | Poncelet equivalent (current) | Milestone |
 |---|:-:|---|---|
 | Buses, routing, effects (reverb, EQ, compressor, delay, chorus, limiter…) | P | Ada mixer with bus graph and effect set (reverb, EQ, compressor, limiter, delay, chorus, filters, distortion) | M3 / M6 |
 | 2D/3D positional audio, Doppler, listeners | P | Panning, attenuation curves, Doppler, listener components, reverb zones | M3 / M5 |
@@ -929,7 +1082,7 @@ Legend: C = covered, P = partial, M = missing, I = intentionally different.
 
 ### A.11 GUI / Control system
 
-| Godot capability | 0.4 | Poncelet equivalent (0.5) | Milestone |
+| Godot capability | 0.4 | Poncelet equivalent (current) | Milestone |
 |---|:-:|---|---|
 | Buttons, check/radio, line/text edit, code editor widget | P | Full widget set incl. multi-line text and code edit | M2–M5 |
 | Popup/option menus with search, scrollbars, tree/table, colour picker | P | Menus, searchable dropdowns, tree/table, colour picker (RGB/HSV/OKHSL) | M2–M3 |
@@ -938,23 +1091,23 @@ Legend: C = covered, P = partial, M = missing, I = intentionally different.
 | Stretch modes / multi-resolution / any aspect | M | Canvas/viewport stretch modes, content scale, aspect handling | M2 |
 | Theme editor, vector styleboxes, texture styleboxes | P | Theme resource + editor, flat/rounded/shadow styleboxes, 9-patch styleboxes | M3 |
 | Rotation/scale of controls, drag-and-drop | M | Transformable controls, DnD API | M3 |
-| BiDi / RTL typesetting and UI mirroring | I | Not needed for our 7 languages; architecture keeps HarfBuzz + logical layout so RTL (SheenBidi/FriBidi) can be added | M9 |
+| BiDi / RTL typesetting and UI mirroring | I | Documented later milestone: BiDi algorithm (SheenBidi/FriBidi or own Ada), HarfBuzz RTL shaping, UI mirroring; logical-order text model from M2 (§8.4) | M9 |
 | Accessibility / screen readers | M | Accessibility tree for UI via AccessKit C API (MIT/Apache) — editor and games | M7 |
 
 ### A.12 Input
 
-| Godot capability | 0.4 | Poncelet equivalent (0.5) | Milestone |
+| Godot capability | 0.4 | Poncelet equivalent (current) | Milestone |
 |---|:-:|---|---|
 | Action map, remapping, deadzones, axis from two actions | C | §6.9 (+ deadzones and axis pairs) | M2–M3 |
 | Physical-key mapping (layout independent) | M | Scancode-based bindings via SDL3 | M2 |
 | Mouse capture/confine, custom cursors, raw input | M | SDL3 relative mode, cursor images, system cursors | M2 |
 | Gamepads (multiple), LED, motion sensors | P | Up to 8 pads, rumble, LED, gyro via SDL3 | M3 |
 | Pen/tablet pressure and tilt | M | SDL3 pen API | M6 |
-| Touch/virtual joystick (mobile) | I | Desktop-only; touchscreen laptops get basic touch events only | — |
+| Touch/virtual joystick (mobile) | I | Multi-touch, gestures, virtual joystick/buttons, sensors, safe areas (§6.9) | M3 (model) / M6 (devices) |
 
 ### A.13 Scripting & extensibility
 
-| Godot capability | 0.4 | Poncelet equivalent (0.5) | Milestone |
+| Godot capability | 0.4 | Poncelet equivalent (current) | Milestone |
 |---|:-:|---|---|
 | GDScript (interpreted, optionally typed) | I | Game logic in compiled Ada with contracts; iteration via hot reload + data assets (§6.6a) | M3 |
 | C# / .NET | I | Not supported; Ada only | — |
@@ -965,7 +1118,7 @@ Legend: C = covered, P = partial, M = missing, I = intentionally different.
 
 ### A.14 Shaders
 
-| Godot capability | 0.4 | Poncelet equivalent (0.5) | Milestone |
+| Godot capability | 0.4 | Poncelet equivalent (current) | Milestone |
 |---|:-:|---|---|
 | Custom 2D vertex/fragment/light shaders | P | Poncelet shader dialect with 2D stages | M3 |
 | Custom 3D vertex/fragment/light/sky/fog shaders | P | 3D stages incl. sky and fog volumes | M5–M6 |
@@ -975,7 +1128,7 @@ Legend: C = covered, P = partial, M = missing, I = intentionally different.
 
 ### A.15 Networking
 
-| Godot capability | 0.4 | Poncelet equivalent (0.5) | Milestone |
+| Godot capability | 0.4 | Poncelet equivalent (current) | Milestone |
 |---|:-:|---|---|
 | TCP/UDP sockets | M | Pc.Net.Sockets on GNAT.Sockets (non-blocking, IPv4/IPv6) | M6 |
 | HTTP/HTTPS client (bundled certs) | M | HTTP/1.1 client in Ada + TLS via mbedTLS binding (Apache-2.0), CA bundle | M6 |
@@ -988,7 +1141,7 @@ Legend: C = covered, P = partial, M = missing, I = intentionally different.
 
 ### A.16 Import
 
-| Godot capability | 0.4 | Poncelet equivalent (0.5) | Milestone |
+| Godot capability | 0.4 | Poncelet equivalent (current) | Milestone |
 |---|:-:|---|---|
 | glTF 2.0 (incl. runtime loading) | P | cgltf import (§6.2) + runtime glTF loading API | M5 / M6 |
 | FBX | I | Previously out of scope; now planned via ufbx (MIT) importer for parity | M6 |
@@ -1001,7 +1154,7 @@ Legend: C = covered, P = partial, M = missing, I = intentionally different.
 
 ### A.17 Internationalisation
 
-| Godot capability | 0.4 | Poncelet equivalent (0.5) | Milestone |
+| Godot capability | 0.4 | Poncelet equivalent (current) | Milestone |
 |---|:-:|---|---|
 | Full Unicode incl. emoji | P | UTF-8 throughout; colour emoji fonts | M2 / M6 |
 | System font fallback | M | Fontconfig / DirectWrite / CoreText fallback lookup | M6 |
@@ -1009,11 +1162,11 @@ Legend: C = covered, P = partial, M = missing, I = intentionally different.
 | Automatic translation of UI, tr() | C | String IDs (§8.2) | M2 |
 | Plurals and contexts | C | §8.3 | M2 |
 | Pseudolocalisation | C | §8.3 | M2 |
-| BiDi/RTL | I | See GUI row | M9 |
+| BiDi/RTL | I | See GUI row (§8.4) | M9 |
 
 ### A.18 Windowing & OS
 
-| Godot capability | 0.4 | Poncelet equivalent (0.5) | Milestone |
+| Godot capability | 0.4 | Poncelet equivalent (current) | Milestone |
 |---|:-:|---|---|
 | Multiple windows, popups, always-on-top, transparent/borderless, passthrough | M | SDL3 multi-window service (editor docks can float), window flags | M5 |
 | Fullscreen (borderless/exclusive) | P | Settings menu covers resolution; add exclusive/borderless modes | M3 |
@@ -1024,7 +1177,7 @@ Legend: C = covered, P = partial, M = missing, I = intentionally different.
 
 ### A.19 Files & resources
 
-| Godot capability | 0.4 | Poncelet equivalent (0.5) | Milestone |
+| Godot capability | 0.4 | Poncelet equivalent (current) | Milestone |
 |---|:-:|---|---|
 | Text and binary scene/resource formats | C | §6.7, §12.1 | M1 |
 | File access, compression, encryption | P | Pc.Files with zstd/deflate; optional pack encryption (AES via mbedTLS) | M4 |
@@ -1035,7 +1188,7 @@ Legend: C = covered, P = partial, M = missing, I = intentionally different.
 
 ### A.20 Misc / production
 
-| Godot capability | 0.4 | Poncelet equivalent (0.5) | Milestone |
+| Godot capability | 0.4 | Poncelet equivalent (current) | Milestone |
 |---|:-:|---|---|
 | Video playback (Theora) | M | Video player: Theora (BSD) or AV1 via dav1d (BSD) + Opus | M6 |
 | Movie Maker mode (offline capture, perfect pacing) | M | Deterministic capture to PNG sequence/WAV (+ ffmpeg if installed); also used by MCP `capture_frames` | M4 |
@@ -1044,18 +1197,17 @@ Legend: C = covered, P = partial, M = missing, I = intentionally different.
 | Coloured rich console output | M | Structured log levels with colour; JSON logs for tools | M1 |
 | Webcam/camera feed | M | SDL3 camera API | M9 |
 | Object/memory profiler (object DB snapshots) | M | World snapshot diff + allocation stats panel | M5 |
-| XR (OpenXR, visionOS, WebXR) | I | Non-goal for v1; OpenXR remains possible later on the SDL_GPU Vulkan path | M9 (optional) |
-| Mobile features (IAP, ads, PiP) | I | Desktop-only | — |
+| XR (OpenXR, visionOS, WebXR) | I | OpenXR VR/AR: PC VR (Vulkan) and standalone Android headsets, hand tracking, passthrough; WebXR after WebGPU (§10.4) | M7 (render hooks) / M9 (OpenXR) |
+| Mobile features (IAP, ads, PiP) | I | Optional platform-service modules: in-app purchases, ads, notifications, PiP behind `Pc.Services.Store`/`Platform` | M9 |
 | Licence: open source MIT | I | Commercial, all rights reserved (§15) | — |
 
-### A.99 Intentional differences (honest summary)
-1. **Platforms:** desktop only (Windows, macOS, Linux). No Android, iOS, web export, or consoles. A WASM build is only an optional experiment.
-2. **Game code language:** compiled **Ada with contracts** instead of GDScript or C#. Iteration speed comes from hot reload and data assets (§6.6a).
-3. **One renderer with quality presets** (SDL_GPU) instead of three renderers (Forward+/Mobile/Compatibility).
-   Very old GPUs without Vulkan, Metal, or D3D12 are not supported.
-4. **No BiDi/RTL in v1:** none of our seven languages needs it. The text architecture leaves room to add it later.
-5. **No XR** in v1 (OpenXR possible later). **No mobile features** (touch controls, IAP, ads).
-6. **No Collada import** (convert via Blender). FBX *is* now planned (ufbx).
-7. **Licence:** commercial, all rights reserved, instead of MIT/open development.
-8. **Paid product:** Poncelet is sold on Steam. Templates are curated packs, not an open asset library (Workshop later).
-
+### A.99 Intentional differences (honest summary, draft 0.7)
+The earlier "desktop only" differences are **removed**: web, Android, iOS, consoles (via partners), XR, the
+compatibility/mobile renderers, RTL text, and a community asset library are all planned (see rows above). Remaining differences:
+1. **Game code language:** compiled **Ada with contracts** instead of GDScript or C#. Iteration speed comes from hot
+   reload and data assets (§6.6a).
+2. **Editor hosts:** the editor runs on desktop (Windows, macOS, Linux). Godot's experimental Android/web editors
+   have no Poncelet equivalent. Games still target every platform.
+3. **No Collada import** (convert via Blender). FBX is planned (ufbx).
+4. **Licence and business model:** commercial, all rights reserved, sold on Steam, instead of MIT/open development.
+   Curated paid template packs sit alongside the community library.
