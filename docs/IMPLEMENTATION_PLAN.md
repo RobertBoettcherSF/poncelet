@@ -1,8 +1,8 @@
 # Poncelet — Implementation Plan (M0 → M8, plus M9 outlook)
 
-> Companion to `docs/DESIGN.md` (draft 0.9). Copyright (c) 2026 Robert Boettcher. All rights reserved.
-> Status: plan only. No code has been committed yet. Dated 2026-11-20. Draft 0.9 adds signature-feature
-> steps (projective geometry, fractals, density; DESIGN §19).
+> Companion to `docs/DESIGN.md` (draft 0.10). Copyright (c) 2026 Robert Boettcher. All rights reserved.
+> Status: plan only. No code has been committed yet. Dated 2026-11-20. Draft 0.10 puts **all** signature
+> features in the first release (M0–M7); nothing in DESIGN §19 is deferred to M9.
 
 ## How to use this plan
 
@@ -36,18 +36,19 @@
 | M2 | World, UI, i18n, MCP | 10 |
 | M3 | 2D complete + hot reload | 17 |
 | M4 | Export + tooling | 15 |
-| M5 | 3D foundation + CSG | 12 |
-| M6 | 3D complete + video + networking base | 17 |
-| M7 | Advanced features | 16 |
+| M5 | 3D foundation + CSG | 14 |
+| M6 | 3D complete + video + networking base | 21 |
+| M7 | Advanced features | 29 |
 | M8 | Beta, maturity gate, platforms + Steam | 10 |
-| M9 | Post-launch (outlook) | 7 |
-| **Total** | | **128** |
+| M9 | Post-launch (outlook) | 6 |
+| **Total** | | **146** |
 
 Critical path: M0 → M1 (SDL3, render core, WASM spike) → M2 (World, UI, tools API) → M3 (2D) → M5 (3D core) → M6 → M7 (GI,
-multiplayer, visual shaders) → M8. M4 (export) can run in parallel with early M5 once M3.8 is done. Networking base
-M6.10 depends only on M0, so it can start early. Signature-feature steps (DESIGN §19) attach to this path and are
-not themselves the critical path: M0.13 after M0.2, M3.16–M3.17 with 2D, M5.12 with cameras, M6.16–M6.17 with fog
-and decals, M7.15–M7.16 with the visual shader editor, M9.7 after launch.
+multiplayer, visual shaders, remaining signature work) → M8. M4 (export) can run in parallel with early M5 once M3.8 is done. Networking base
+M6.10 depends only on M0, so it can start early. Signature-feature steps (DESIGN §19) are now on the path to M8:
+M0.13 after M0.2, M3.16–M3.17 with 2D, M5.12–M5.14 with cameras and SDF math, M6.16–M6.21 with density, mirrors,
+2D SPH and voxel resources. Inside M7, four tracks can run in parallel after their deps: portals and calibration
+(M7.17–M7.19), SPH (M7.20–M7.21), voxels and dual contouring (M7.22–M7.25), raymarch and infinite zoom (M7.26–M7.29).
 
 ## M0 — Skeleton + CLI
 
@@ -685,12 +686,29 @@ First step that needs SDL3. It's built locally into `third_party/` by a script, 
 
 
 ### M5.12 Projective camera model + infinite far plane
-- **Goal:** 3D (and 2.5D) cameras built on `Pc.Math.Projective`, including a robust infinite far plane / reversed-Z path that works on every renderer tier (DESIGN §19.1).
+- **Goal:** 3D (and 2.5D) cameras built on `Pc.Math.Projective`, including a robust infinite far plane / reversed-Z path that works on every renderer tier (DESIGN §19.1). Anamorphic and other non-standard modes follow in M5.13.
 - **Packages/files:** `pc-camera-projective*`, hook into `pc-scene-3d` and the render graph
 - **Contracts/tests:** No silent w = 0; frustum and projection contracts. Golden screenshot: a distant object against the sky with no far-plane clipping or depth fighting, on high-end and on the compatibility path when that exists
 - **Verify:** `./run-tests.sh camera_projective && ./bin/poncelet demo far_plane && ./bin/poncelet screenshot samples/far_plane --out /tmp/far.png`
 - **Done when:** `PASS camera_projective`; screenshot matches golden within tolerance on the available tiers
 - **Depends on:** M5.1, M0.13, M1.7
+
+
+### M5.13 Anamorphic and non-standard projections
+- **Goal:** First-class anamorphic and other non-standard camera projections built on `Pc.Math.Projective`, with editor controls and support on every 3D renderer tier (DESIGN §19.1, §19.5).
+- **Packages/files:** `pc-camera-nonstandard*`, editor camera panel, a sample scene
+- **Contracts/tests:** Projection parameters as ranged subtypes; a documented anamorphic matrix matches a known-answer test. Golden screenshot on high-end and on the compatibility path when it exists
+- **Verify:** `./run-tests.sh camera_nonstandard && ./bin/poncelet demo anamorphic && ./bin/poncelet screenshot samples/anamorphic --out /tmp/ana.png`
+- **Done when:** `PASS camera_nonstandard`; screenshots match golden within tolerance
+- **Depends on:** M5.12
+
+### M5.14 SDF fractal distance estimators
+- **Goal:** Platform-free distance estimators for Mandelbulb (and similar) fractals in `Pc.Fractal.SDF`, with contracts and known-answer tests, ready for the M7 raymarch path (DESIGN §19.2).
+- **Packages/files:** `src/core/pc-fractal-sdf.ads/.adb`, `tests/sdf_fractal*`
+- **Contracts/tests:** Parameter bounds (iterations, power, escape radius) as ranged subtypes. Known-answer distances at documented points (inside, on, and outside a reference Mandelbulb); no silent overflow
+- **Verify:** `./run-tests.sh sdf_fractal`
+- **Done when:** `PASS sdf_fractal`; native hash of the sample grid equals the WASM/headless hash
+- **Depends on:** M3.16, M0.2
 
 ## M6 — 3D complete + video + networking base
 
@@ -831,6 +849,39 @@ First step that needs SDL3. It's built locally into `third_party/` by a script, 
 - **Done when:** `PASS projectors`; screenshots match golden within tolerance
 - **Depends on:** M6.4, M0.13, M5.12
 
+
+### M6.18 Portal and mirror math
+- **Goal:** Plane-pair portal and planar-mirror geometry in `pc-core`: homographies, clip planes, and teleport transforms, with contracts (DESIGN §19.1).
+- **Packages/files:** `src/core/pc-portal.ads/.adb`, `tests/portal_math*`
+- **Contracts/tests:** A documented portal pair maps a point and a ray onto the exit portal; a mirror plane reflects a ray; w = 0 stays guarded. Known-answer tests only (no GPU)
+- **Verify:** `./run-tests.sh portal_math`
+- **Done when:** `PASS portal_math`
+- **Depends on:** M0.13, M5.12
+
+### M6.19 Planar mirror rendering
+- **Goal:** Planar mirrors via render-to-texture or stencil, one bounce, using M6.18 math, with a single-bounce fallback on compatibility / WebGL2 (DESIGN §19.1).
+- **Packages/files:** `pc-render-mirrors*`, a sample scene, MCP/editor placement hook
+- **Contracts/tests:** Bounce cap is a ranged subtype (1 on compatibility, small N on high-end). Golden screenshot of a documented mirror scene on high-end and compatibility
+- **Verify:** `./run-tests.sh mirrors && ./bin/poncelet demo mirrors && ./bin/poncelet screenshot samples/mirrors --out /tmp/mirrors.png`
+- **Done when:** `PASS mirrors`; screenshots match golden within tolerance; no crash on the compatibility path
+- **Depends on:** M6.18, M1.7, M5.3
+
+### M6.20 SPH fluid solver (2D)
+- **Goal:** A bounded, seeded 2D SPH solver in `pc-core`: density, pressure, viscosity, integrate, write to a density field (DESIGN §19.3).
+- **Packages/files:** `src/core/pc-sph.ads/.adb`, `pc-sph-2d*`, `tests/sph2d*`, CLI `poncelet sph`
+- **Contracts/tests:** Particle count and neighbourhood size as ranged subtypes; no out-of-bounds writes. A documented fixture is seed-stable and hashes identically on native and WASM after N steps. Energy/volume stay within documented bounds (no explosion)
+- **Verify:** `./run-tests.sh sph2d && ./bin/poncelet sph --dim 2 --world-seed 1 --steps 120 --out /tmp/sph2d.pres`
+- **Done when:** `PASS sph2d`; native and WASM hashes match
+- **Depends on:** M6.16, M0.12
+
+### M6.21 Sparse voxel volume resource
+- **Goal:** A sparse voxel volume as a first-class `.pres` resource: sample, set, canonical text serialisation, and a bounded memory cap (DESIGN §19.3).
+- **Packages/files:** `src/core/pc-voxels.ads/.adb`, schemas, CLI `poncelet voxels inspect`, `tests/voxels_res*`
+- **Contracts/tests:** Resolution, bounds and occupancy under contracts; `.pres` round-trip is byte-stable; a documented volume hashes identically on native and WASM
+- **Verify:** `./run-tests.sh voxels_res && ./bin/poncelet voxels inspect tests/voxels/unit.pres`
+- **Done when:** `PASS voxels_res`; hashes match
+- **Depends on:** M1.8, M6.16
+
 ## M7 — Advanced features
 
 ### M7.1 Dynamic GI: voxel volumes
@@ -962,6 +1013,111 @@ First step that needs SDL3. It's built locally into `third_party/` by a script, 
 - **Done when:** `PASS worldgen`; hashes match across native and WASM
 - **Depends on:** M3.16, M6.16, M5.2, M2.8
 
+
+### M7.17 Portal rendering, teleport, and editor
+- **Goal:** Portal rendering (offscreen or stencil, recursion cap), teleport of bodies and cameras, and editor placement, built on M6.18 (DESIGN §19.1).
+- **Packages/files:** `pc-render-portals*`, `pc-portal-teleport*`, editor portal tool, a sample scene, MCP `set_portal`
+- **Contracts/tests:** Recursion cap as a ranged subtype (0 extra recursions on compatibility: one offscreen). Teleport preserves a seeded replay. Golden screenshots of a documented portal pair on high-end and a simpler one-offscreen path on compatibility
+- **Verify:** `./run-tests.sh portals && ./bin/poncelet demo portals && ./bin/poncelet screenshot samples/portals --out /tmp/portals.png`
+- **Done when:** `PASS portals`; screenshots match golden; a body walking through a portal is replay-stable
+- **Depends on:** M6.18, M6.19, M5.8, M3.13
+
+### M7.18 Camera calibration math
+- **Goal:** Checkerboard / still-image camera calibration and AR-friendly homographies in `Pc.Calib`, with contracts and known-answer fixtures (DESIGN §19.1). The OpenXR runtime stays in M9.
+- **Packages/files:** `src/core/pc-calib.ads/.adb`, `tests/calib_math*`, documented checkerboard fixtures
+- **Contracts/tests:** Reprojection error of a documented fixture is under a stated threshold; degenerate point sets are rejected by `Pre`. Homography and pose round-trip within tolerance
+- **Verify:** `./run-tests.sh calib_math`
+- **Done when:** `PASS calib_math`
+- **Depends on:** M0.13, M5.12
+
+### M7.19 Calibration workflow (CLI, editor, MCP)
+- **Goal:** `poncelet calibrate` and MCP `calibrate_camera` consume still images or a marked checkerboard, write a camera into a scene, and show residual error in the editor (DESIGN §19.1).
+- **Packages/files:** `cli/calibrate*`, editor calibration panel, sample images under `tests/calib/`
+- **Contracts/tests:** Schema-validated camera output; a documented image set reproduces the M7.18 pose within tolerance. Headless path needs no webcam (webcam capture stays M9)
+- **Verify:** `./bin/poncelet calibrate tests/calib/board/ --out /tmp/cam.json && ./run-tests.sh calib_workflow`
+- **Done when:** `PASS calib_workflow`; residual under the documented threshold
+- **Depends on:** M7.18, M2.8, M5.12
+
+### M7.20 SPH fluid solver (3D)
+- **Goal:** Extend the 2D SPH solver to 3D with the same contracts, seeds, and hash discipline (DESIGN §19.3).
+- **Packages/files:** `pc-sph-3d*`, `tests/sph3d*`
+- **Contracts/tests:** Same bounds as M6.20 in 3D; a documented dam-break fixture is seed-stable on native and WASM; particle cap is enforced
+- **Verify:** `./run-tests.sh sph3d && ./bin/poncelet sph --dim 3 --world-seed 1 --steps 120 --out /tmp/sph3d.pres`
+- **Done when:** `PASS sph3d`; hashes match
+- **Depends on:** M6.20
+
+### M7.21 SPH rendering, density coupling, and emitters
+- **Goal:** Draw SPH particles (and an optional surface), couple the solver to a density field, and add editor emitters (DESIGN §19.3).
+- **Packages/files:** `pc-sph-render*`, density-field hook, editor emitter, a sample scene
+- **Contracts/tests:** Particle and neighbour caps per renderer tier. A seeded emitter plus 60 steps writes a density field whose hash is stable. Golden screenshot on high-end; compatibility draws a cheaper path without crashing
+- **Verify:** `./run-tests.sh sph_render && ./bin/poncelet demo sph && ./bin/poncelet screenshot samples/sph --out /tmp/sph.png`
+- **Done when:** `PASS sph_render`; hashes and screenshots match
+- **Depends on:** M7.20, M6.16, M6.5
+
+### M7.22 Voxel editing and destruction
+- **Goal:** Undoable, serialised voxel editing and destruction (carve, stamp, CSG subtract) on the M6.21 volume, with a seeded tool path for tests (DESIGN §19.3).
+- **Packages/files:** `pc-voxels-edit*`, editor voxel brush, CLI `poncelet voxels carve`, MCP `carve_voxels`
+- **Contracts/tests:** Occupancy stays inside the memory cap; edits are ordinary undo commands. A documented carve sequence round-trips through `.pres` and hashes identically on native and WASM
+- **Verify:** `./run-tests.sh voxels_edit && ./bin/poncelet voxels carve tests/voxels/unit.pres --tool sphere --out /tmp/carved.pres`
+- **Done when:** `PASS voxels_edit`; hashes match; undo restores the original hash
+- **Depends on:** M6.21, M2.5, M5.9
+
+### M7.23 Voxel collision and physics
+- **Goal:** Collision queries and Jolt/2D-physics shapes from a voxel volume, so a carved hole is walkable and ray-castable (DESIGN §19.3).
+- **Packages/files:** `pc-voxels-physics*`, `tests/voxels_phys*`
+- **Contracts/tests:** Point, ray, and shape queries match known answers on a documented volume. A seeded body falling into a carved well is replay-stable
+- **Verify:** `./run-tests.sh voxels_phys`
+- **Done when:** `PASS voxels_phys`
+- **Depends on:** M7.22, M5.8, M3.13
+
+### M7.24 Dual contouring isosurface
+- **Goal:** Dual contouring from a density field or voxel volume, preserving a documented sharp edge better than marching cubes (DESIGN §19.3).
+- **Packages/files:** `pc-iso-dc*`, `tests/dual_contour*`
+- **Contracts/tests:** Index and vertex bounds; a documented sharp-edge field produces a mesh whose hash is stable and whose Hausdorff distance to the feature is under a stated tolerance (tighter than the M7.16 marching-cubes mesh of the same field)
+- **Verify:** `./run-tests.sh dual_contour && ./bin/poncelet gen world --iso dual-contour --world-seed 1 --out /tmp/dc/`
+- **Done when:** `PASS dual_contour`; native and WASM hashes match
+- **Depends on:** M7.16, M6.21
+
+### M7.25 Dual contouring LOD and editor bake
+- **Goal:** LOD levels, quality presets, and an editor bake of dual-contouring meshes, usable on every renderer tier (DESIGN §19.3).
+- **Packages/files:** editor bake command, LOD tables, a sample
+- **Contracts/tests:** LOD count and cell size as ranged subtypes. A "low" bake stays under a documented vertex budget. Output is an ordinary mesh that draws on high-end and compatibility
+- **Verify:** `./run-tests.sh dual_contour_lod && ./bin/poncelet bake iso samples/dc_field --quality low --out /tmp/dc_low.mesh`
+- **Done when:** `PASS dual_contour_lod`; budget test fails a deliberately oversized request
+- **Depends on:** M7.24, M6.5
+
+### M7.26 SDF raymarch (Mandelbulb) high-end path
+- **Goal:** A high-end raymarch pass for Mandelbulb-style SDF fractals, using M5.14 estimators, with quality presets and a preview in the editor (DESIGN §19.2).
+- **Packages/files:** `pc-render-sdf-raymarch*`, a sample material/scene, CLI `poncelet gen raymarch`
+- **Contracts/tests:** Iteration and step caps as ranged subtypes. Golden screenshot of a documented Mandelbulb on the high-end tier
+- **Verify:** `./run-tests.sh raymarch && ./bin/poncelet demo mandelbulb && ./bin/poncelet screenshot samples/mandelbulb --out /tmp/mb.png`
+- **Done when:** `PASS raymarch`; screenshot matches golden within tolerance
+- **Depends on:** M5.14, M5.3, M7.3
+
+### M7.27 Raymarch LOD and compatibility fallback
+- **Goal:** LOD / mobile iteration budgets for SDF raymarching, plus a pre-baked mesh or impostor fallback on compatibility / WebGL2 (DESIGN §19.2).
+- **Packages/files:** quality-preset tables, mesh-bake from the SDF, a compatibility sample
+- **Contracts/tests:** The "low" mobile preset is rejected if it exceeds its cap. Compatibility shows the baked fallback and does not attempt unbounded raymarch. Golden screenshot of the fallback
+- **Verify:** `./run-tests.sh raymarch_lod && ./bin/poncelet screenshot samples/mandelbulb --tier compatibility --out /tmp/mb_compat.png`
+- **Done when:** `PASS raymarch_lod`; budget test fails an over-budget graph; fallback screenshot matches golden; no crash on WebGL2 when that export exists
+- **Depends on:** M7.26, M7.16, M6.13
+
+### M7.28 Infinite zoom: double-precision escape-time
+- **Goal:** A deterministic double-precision escape-time path for deep Mandelbrot/Julia zooms, hashed and comparable on native and WASM (DESIGN §19.2).
+- **Packages/files:** `pc-zoom-double*`, `tests/zoom_double*`, CLI `poncelet zoom --method double`
+- **Contracts/tests:** A documented location and zoom level produce the same iteration grid hash on native and WASM. No silent overflow; zoom and iteration caps are ranged
+- **Verify:** `./run-tests.sh zoom_double && ./bin/poncelet zoom --method double --in tests/zoom/locus.json --out /tmp/z_d.pres`
+- **Done when:** `PASS zoom_double`; hashes match
+- **Depends on:** M7.15, M0.12
+
+### M7.29 Infinite zoom: perturbation method
+- **Goal:** A deterministic perturbation deep-zoom that matches the M7.28 double-precision reference within a documented tolerance, at a cost suitable for interactive previews (DESIGN §19.2).
+- **Packages/files:** `pc-zoom-perturb*`, `tests/zoom_perturb*`, CLI `poncelet zoom --method perturbation`
+- **Contracts/tests:** For a documented locus, perturbation vs double reference stays inside tolerance; the perturbation result hashes stably on native and WASM. A golden preview image is optional but preferred
+- **Verify:** `./run-tests.sh zoom_perturb && ./bin/poncelet zoom --method perturbation --in tests/zoom/locus.json --out /tmp/z_p.pres`
+- **Done when:** `PASS zoom_perturb`; hashes match; vs-reference check is inside tolerance
+- **Depends on:** M7.28
+
 ## M8 — Beta, maturity gate, platforms + Steam
 
 No sign-ups before step M8.6 (Robert's decision).
@@ -983,12 +1139,12 @@ No sign-ups before step M8.6 (Robert's decision).
 - **Depends on:** M8.1
 
 ### M8.3 Template packs finalised
-- **Goal:** Finalise and sign the bundled template packs: Reckoning (first pack), Roguelike Jungle, Colony4X, Hood Simulator, plus the engine demo templates; all seven languages; each with golden replays and parity tests. If Robert agrees (DESIGN Q20), include a small official template that exercises the three signature pillars (perspective guides, seeded fractal world, painted density field).
+- **Goal:** Finalise and sign the bundled template packs: Reckoning (first pack), Roguelike Jungle, Colony4X, Hood Simulator, plus the engine demo templates; all seven languages; each with golden replays and parity tests. If Robert agrees (DESIGN Q20), include a small official template that exercises the three signature pillars (perspective guides, portals or anamorphic camera, seeded fractal world or Mandelbulb/deep zoom, painted density, SPH or destructible voxels).
 - **Packages/files:** `templates/*`, `packs/*.ponpack`
 - **Contracts/tests:** Every pack passes `poncelet test --replays --parity`; signatures verify
 - **Verify:** `./bin/poncelet validate packs/ --json`
 - **Done when:** All packs valid and signed
-- **Depends on:** M7.9
+- **Depends on:** M7.9, M7.17, M7.21, M7.23, M7.27, M7.29
 
 ### M8.4 Localisation QA
 - **Goal:** Native-speaker review of all seven languages.
@@ -1048,7 +1204,9 @@ No sign-ups before step M8.6 (Robert's decision).
 
 ## M9 — Post-launch (outlook)
 
-Planned after launch. Steps are coarser and will be refined then.
+Planned after launch. Steps are coarser and will be refined then. Signature-pillar work is not in this
+milestone; it was scheduled in M0–M7 in draft 0.10 (DESIGN §19.5). M9.1 OpenXR can consume the M7 calibration
+toolkit when the runtime lands.
 
 ### M9.1 OpenXR VR/AR
 - **Goal:** PC VR via Vulkan, standalone Android headsets via the mobile tier, hand tracking, passthrough.
@@ -1098,14 +1256,6 @@ Planned after launch. Steps are coarser and will be refined then.
 - **Done when:** Sample IAP flow in a test store
 - **Depends on:** M8.8
 
-
-### M9.7 Advanced signature features
-- **Goal:** Post-launch signature work (DESIGN §19.5): SDF raymarched fractals (Mandelbulb and similar) with LOD, infinite-zoom escape-time precision (double + perturbation), SPH-style fluid density, destructible voxel terrain and dual contouring, anamorphic and non-standard projections, portal/mirror math, and AR camera-calibration homographies (with OpenXR).
-- **Packages/files:** `pc-fractal-sdf*`, `pc-zoom-perturb*`, `pc-density-sph*`, `pc-voxels*`, `pc-iso-dc*`, `pc-camera-nonstandard*`, `pc-portals*`, `pc-calib*`
-- **Contracts/tests:** To be refined at M9; each item keeps the §19 rules (contracts, seeds, per-tier budgets, CLI/MCP, golden tests)
-- **Verify:** (refined then)
-- **Done when:** A documented Mandelbulb demo runs on high-end with an LOD path and a mesh/impostor fallback on compatibility; at least one of SPH, destructible voxels, or AR calibration is playable in a sample
-- **Depends on:** M7.15, M7.16, M5.12, M9.1 (for AR calibration)
 
 ## Definition of done for a milestone
 
