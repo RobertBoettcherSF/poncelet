@@ -1,7 +1,8 @@
 # Poncelet — Implementation Plan (M0 → M8, plus M9 outlook)
 
-> Companion to `docs/DESIGN.md` (draft 0.8). Copyright (c) 2026 Robert Boettcher. All rights reserved.
-> Status: plan only. No code has been committed yet. Dated 2026-11-19.
+> Companion to `docs/DESIGN.md` (draft 0.9). Copyright (c) 2026 Robert Boettcher. All rights reserved.
+> Status: plan only. No code has been committed yet. Dated 2026-11-20. Draft 0.9 adds signature-feature
+> steps (projective geometry, fractals, density; DESIGN §19).
 
 ## How to use this plan
 
@@ -30,21 +31,23 @@
 
 | Milestone | Theme | Steps |
 |---|---|---|
-| M0 | Skeleton + CLI | 12 |
+| M0 | Skeleton + CLI | 13 |
 | M1 | Pixels + formats | 11 |
 | M2 | World, UI, i18n, MCP | 10 |
-| M3 | 2D complete + hot reload | 15 |
+| M3 | 2D complete + hot reload | 17 |
 | M4 | Export + tooling | 15 |
-| M5 | 3D foundation + CSG | 11 |
-| M6 | 3D complete + video + networking base | 15 |
-| M7 | Advanced features | 14 |
+| M5 | 3D foundation + CSG | 12 |
+| M6 | 3D complete + video + networking base | 17 |
+| M7 | Advanced features | 16 |
 | M8 | Beta, maturity gate, platforms + Steam | 10 |
-| M9 | Post-launch (outlook) | 6 |
-| **Total** | | **119** |
+| M9 | Post-launch (outlook) | 7 |
+| **Total** | | **128** |
 
 Critical path: M0 → M1 (SDL3, render core, WASM spike) → M2 (World, UI, tools API) → M3 (2D) → M5 (3D core) → M6 → M7 (GI,
 multiplayer, visual shaders) → M8. M4 (export) can run in parallel with early M5 once M3.8 is done. Networking base
-M6.10 depends only on M0, so it can start early.
+M6.10 depends only on M0, so it can start early. Signature-feature steps (DESIGN §19) attach to this path and are
+not themselves the critical path: M0.13 after M0.2, M3.16–M3.17 with 2D, M5.12 with cameras, M6.16–M6.17 with fog
+and decals, M7.15–M7.16 with the visual shader editor, M9.7 after launch.
 
 ## M0 — Skeleton + CLI
 
@@ -59,7 +62,7 @@ Only GNAT 12.3 + gprbuild needed. No SDL3, no Alire, no sudo.
 - **Depends on:** —
 
 ### M0.2 Pc.Math (2D + 3D)
-- **Goal:** Vectors, matrices, quaternions, Transform2D/3D with contracts.
+- **Goal:** Vectors, matrices, quaternions, Transform2D/3D with contracts. Projective types follow in M0.13.
 - **Packages/files:** `src/core/pc.ads`, `src/core/pc-math.ads/.adb`
 - **Contracts/tests:** `Pre`/`Post` on Normalize, From_Axis_Angle, Rotate. Smoke test: rotate (1,0,0) by 90° around Z gives (0,1,0); identity composition
 - **Verify:** `./run-tests.sh math`
@@ -145,6 +148,15 @@ Only GNAT 12.3 + gprbuild needed. No SDL3, no Alire, no sudo.
 - **Verify:** `./run-tests.sh random`
 - **Done when:** `PASS random`: 4 generators × 1000 vectors identical, stream-independence check passes, hash of a fixed field list equals the committed value; GNAT 12.3 build has 0 warnings
 - **Depends on:** M0.11, M0.2
+
+
+### M0.13 Pc.Math.Projective (signature: projective geometry)
+- **Goal:** Homogeneous points, lines and planes (including points at infinity), incidence, cross-ratio, duality, and projective transforms as a SPARK-ready, platform-free core package (DESIGN §19.1).
+- **Packages/files:** `src/core/pc-math-projective.ads/.adb`, `tests/math_projective*`
+- **Contracts/tests:** `Pre`/`Post` on Meet, Join, Dual, Cross_Ratio, and on `Is_Finite` / `Is_At_Infinity` (no silent division by w = 0). Known-answer tests: a documented complete quadrangle's cross-ratio; duality is involutive; a point at infinity lies on a given line; a documented homography maps four points to four others
+- **Verify:** `./run-tests.sh math_projective`
+- **Done when:** `PASS math_projective`
+- **Depends on:** M0.2
 
 ## M1 — Pixels + formats
 
@@ -442,6 +454,23 @@ First step that needs SDL3. It's built locally into `third_party/` by a script, 
 - **Done when:** `stuck 0, errors 0`, `PASS 20/20 identical to auto_run`, golden replay passes in `./run-tests.sh replays`
 - **Depends on:** M3.14, M1.11
 
+
+### M3.16 Fractal generators (noise, L-systems, IFS)
+- **Goal:** Seeded, deterministic fractal generators in `pc-core`: fBm, ridged and domain-warped noise, Diamond-square, L-systems, and IFS, all tied to the world seed (DESIGN §19.2).
+- **Packages/files:** `src/core/pc-noise*`, `src/core/pc-fractal*`, `cli` `gen` subcommand, schemas for generator parameters
+- **Contracts/tests:** Iteration and degree caps as ranged subtypes; the same `(world seed, parameters)` yields the same content hash. Smoke: a documented L-system tree, an IFS, a Diamond-square heightmap, and fBm sample grid
+- **Verify:** `./run-tests.sh fractal && ./bin/poncelet gen noise --world-seed 1 --kind fbm --out /tmp/n.pres && ./bin/poncelet gen lsystem --world-seed 1 --out /tmp/t.pres`
+- **Done when:** `PASS fractal`; native hash equals the WASM/headless hash for the documented cases
+- **Depends on:** M0.12, M0.13, M1.8
+
+### M3.17 2D projective editor tools (guides, 2.5D)
+- **Goal:** Perspective grids, horizon and vanishing-point guides in the 2D viewport, plus a first-class 2.5D / fake-3D projection mode, all stored in `.pscene` (DESIGN §19.1).
+- **Packages/files:** `src/editor/guides-projective*`, `pc-scene` projection-mode component, MCP `set_perspective_guides`, CLI `poncelet projective`
+- **Contracts/tests:** Guide parameters are ranged; scene round-trip is byte-stable after `fmt`. A documented vanishing-point construction matches `Pc.Math.Projective` known answers
+- **Verify:** `./run-tests.sh guides_projective && ./bin/poncelet projective --query vanishing --in tests/projective/quad.json`
+- **Done when:** `PASS guides_projective`; guides appear in the 2D viewport and survive save/reload
+- **Depends on:** M3.10, M0.13, M2.8
+
 ## M4 — Export + tooling
 
 ### M4.1 Data pack `.ppak`
@@ -567,7 +596,7 @@ First step that needs SDL3. It's built locally into `third_party/` by a script, 
 ## M5 — 3D foundation + CSG
 
 ### M5.1 3D math/scene types + cameras
-- **Goal:** Transform3D components, perspective/ortho cameras, frustum.
+- **Goal:** Transform3D components, perspective/ortho cameras, frustum. The projective camera model and infinite far plane land in M5.12.
 - **Packages/files:** `pc-scene-3d*`
 - **Contracts/tests:** Frustum plane normalisation contracts
 - **Verify:** `./run-tests.sh scene3d`
@@ -654,6 +683,15 @@ First step that needs SDL3. It's built locally into `third_party/` by a script, 
 - **Done when:** `PASS 20/20 identical (native) / 20/20 (wasm)`
 - **Depends on:** M4.15, M0.12
 
+
+### M5.12 Projective camera model + infinite far plane
+- **Goal:** 3D (and 2.5D) cameras built on `Pc.Math.Projective`, including a robust infinite far plane / reversed-Z path that works on every renderer tier (DESIGN §19.1).
+- **Packages/files:** `pc-camera-projective*`, hook into `pc-scene-3d` and the render graph
+- **Contracts/tests:** No silent w = 0; frustum and projection contracts. Golden screenshot: a distant object against the sky with no far-plane clipping or depth fighting, on high-end and on the compatibility path when that exists
+- **Verify:** `./run-tests.sh camera_projective && ./bin/poncelet demo far_plane && ./bin/poncelet screenshot samples/far_plane --out /tmp/far.png`
+- **Done when:** `PASS camera_projective`; screenshot matches golden within tolerance on the available tiers
+- **Depends on:** M5.1, M0.13, M1.7
+
 ## M6 — 3D complete + video + networking base
 
 ### M6.1 Skeletal animation + skins + blend shapes
@@ -681,7 +719,7 @@ First step that needs SDL3. It's built locally into `third_party/` by a script, 
 - **Depends on:** M5.5
 
 ### M6.4 SSAO, SSIL, SSR, decals, volumetric fog, post FX
-- **Goal:** Screen-space effects and fog volumes.
+- **Goal:** Screen-space effects and fog volumes. Density-field-driven fog and homography projectors land in M6.16–M6.17.
 - **Packages/files:** `pc-render-post*`, `-decals`, `-fog`
 - **Contracts/tests:** Effect toggles are per-quality preset
 - **Verify:** `./bin/poncelet demo fx`
@@ -776,6 +814,23 @@ First step that needs SDL3. It's built locally into `third_party/` by a script, 
 - **Done when:** iOS build artifact compiles and links
 - **Depends on:** M6.12
 
+
+### M6.16 Density-field resource + uses
+- **Goal:** First-class density fields (scalar/vector, dense/sparse) as `.pres` resources, with canonical text serialisation, editor painting v0, scattering, AI heat maps, density-aware physics queries, and volumetric fog/smoke driven by a field (DESIGN §19.3).
+- **Packages/files:** `src/core/pc-density*`, schemas, editor paint panel, CLI `gen density`, MCP `sample_density` / `paint_density` / `scatter_from_density`, fog service hook
+- **Contracts/tests:** Bounds, resolution and sparsity under contracts; `.pres` round-trip is byte-stable; the same seed places the same scatter set; point-sample and ray-march queries match known answers. Fog demo degrades without crashing on compatibility / WebGL2
+- **Verify:** `./run-tests.sh density && ./bin/poncelet gen density --world-seed 1 --out /tmp/d.pres && ./bin/poncelet demo density_fog`
+- **Done when:** `PASS density`; native and WASM hashes match for the documented field and scatter set
+- **Depends on:** M1.8, M0.12, M6.4, M2.8
+
+### M6.17 Homography-based decals and projectors
+- **Goal:** Decals and projectors defined by a plane-to-plane homography from `Pc.Math.Projective`, with a cheap single-projector fallback on the compatibility / WebGL2 tier (DESIGN §19.1, §19.4).
+- **Packages/files:** `pc-render-projectors*`, material/decal resource fields, a sample scene
+- **Contracts/tests:** Homography maps four documented corners correctly (reuse M0.13 vectors). Golden screenshot of a projected texture on a plane, high-end and compatibility
+- **Verify:** `./run-tests.sh projectors && ./bin/poncelet demo projectors`
+- **Done when:** `PASS projectors`; screenshots match golden within tolerance
+- **Depends on:** M6.4, M0.13, M5.12
+
 ## M7 — Advanced features
 
 ### M7.1 Dynamic GI: voxel volumes
@@ -795,7 +850,7 @@ First step that needs SDL3. It's built locally into `third_party/` by a script, 
 - **Depends on:** M7.1
 
 ### M7.3 Visual shader editor
-- **Goal:** Node graph → shader dialect, preview, custom nodes.
+- **Goal:** Node graph → shader dialect, preview, custom nodes. Fractal noise and escape-time nodes land in M7.15.
 - **Packages/files:** `src/editor/shadergraph*`, `pc-shader-graph*`
 - **Contracts/tests:** Graph type-checking (port types as Ada enums)
 - **Verify:** `./bin/poncelet-editor samples/materials`
@@ -890,6 +945,23 @@ First step that needs SDL3. It's built locally into `third_party/` by a script, 
 - **Done when:** `PASS timeline w1–w145` (or tolerance report), seed batch summary written
 - **Depends on:** M7.13, M6.6, M6.11
 
+
+### M7.15 Visual shader fractal nodes + budgets
+- **Goal:** Visual shader nodes for fractal noise (fBm, ridged, domain-warp) and escape-time Mandelbrot/Julia, with per-tier iteration/sample caps and editor warnings (DESIGN §19.2).
+- **Packages/files:** shader-graph node definitions, dialect builtins, quality-preset tables, a sample material
+- **Contracts/tests:** Port types stay in the graph type-checker (M7.3). The "low" mobile/web preset is rejected if it exceeds its cap. Golden screenshots on high-end and WebGL2 at the low preset
+- **Verify:** `./run-tests.sh shader_fractal && ./bin/poncelet-editor samples/materials/julia.pshader --screenshot /tmp/julia.png --tier compatibility`
+- **Done when:** `PASS shader_fractal`; budget test fails a deliberately over-budget graph; screenshots match golden
+- **Depends on:** M7.3, M3.16, M6.13
+
+### M7.16 Fractal/density world generation + marching cubes
+- **Goal:** A seeded pipeline `noise/IFS → density field → scatter or marching-cubes mesh`, exposed as `poncelet gen world` and MCP `generate_world`, plus fractal density volumes at v1 quality (DESIGN §19.3–§19.4).
+- **Packages/files:** `pc-gen-world*`, `pc-iso-cubes*`, editor "generate world" command, schemas
+- **Contracts/tests:** The same world seed produces the same field hash, scatter set, and mesh hash on native and WASM. Marching cubes on a documented field matches a golden hash. Output is a normal mesh that draws on all renderer tiers
+- **Verify:** `./run-tests.sh worldgen && ./bin/poncelet gen world --world-seed 1 --out /tmp/wg/`
+- **Done when:** `PASS worldgen`; hashes match across native and WASM
+- **Depends on:** M3.16, M6.16, M5.2, M2.8
+
 ## M8 — Beta, maturity gate, platforms + Steam
 
 No sign-ups before step M8.6 (Robert's decision).
@@ -911,7 +983,7 @@ No sign-ups before step M8.6 (Robert's decision).
 - **Depends on:** M8.1
 
 ### M8.3 Template packs finalised
-- **Goal:** Finalise and sign the bundled template packs: Reckoning (first pack), Roguelike Jungle, Colony4X, Hood Simulator, plus the engine demo templates; all seven languages; each with golden replays and parity tests.
+- **Goal:** Finalise and sign the bundled template packs: Reckoning (first pack), Roguelike Jungle, Colony4X, Hood Simulator, plus the engine demo templates; all seven languages; each with golden replays and parity tests. If Robert agrees (DESIGN Q20), include a small official template that exercises the three signature pillars (perspective guides, seeded fractal world, painted density field).
 - **Packages/files:** `templates/*`, `packs/*.ponpack`
 - **Contracts/tests:** Every pack passes `poncelet test --replays --parity`; signatures verify
 - **Verify:** `./bin/poncelet validate packs/ --json`
@@ -1025,6 +1097,15 @@ Planned after launch. Steps are coarser and will be refined then.
 - **Verify:** (device)
 - **Done when:** Sample IAP flow in a test store
 - **Depends on:** M8.8
+
+
+### M9.7 Advanced signature features
+- **Goal:** Post-launch signature work (DESIGN §19.5): SDF raymarched fractals (Mandelbulb and similar) with LOD, infinite-zoom escape-time precision (double + perturbation), SPH-style fluid density, destructible voxel terrain and dual contouring, anamorphic and non-standard projections, portal/mirror math, and AR camera-calibration homographies (with OpenXR).
+- **Packages/files:** `pc-fractal-sdf*`, `pc-zoom-perturb*`, `pc-density-sph*`, `pc-voxels*`, `pc-iso-dc*`, `pc-camera-nonstandard*`, `pc-portals*`, `pc-calib*`
+- **Contracts/tests:** To be refined at M9; each item keeps the §19 rules (contracts, seeds, per-tier budgets, CLI/MCP, golden tests)
+- **Verify:** (refined then)
+- **Done when:** A documented Mandelbulb demo runs on high-end with an LOD path and a mesh/impostor fallback on compatibility; at least one of SPH, destructible voxels, or AR calibration is playable in a sample
+- **Depends on:** M7.15, M7.16, M5.12, M9.1 (for AR calibration)
 
 ## Definition of done for a milestone
 

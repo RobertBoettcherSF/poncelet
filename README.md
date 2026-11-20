@@ -1,7 +1,7 @@
 # Poncelet
 
 Poncelet is a commercial desktop game engine **and editor** for Steam, with its core written in **Ada**.
-The goal is to match Godot's capability in **2D and 3D**.
+The goal is to match Godot's capability in **2D and 3D**, and to go beyond it with first-class **projective geometry**, **fractals**, and **density**.
 
 **Status:** design draft. There is no code yet.
 
@@ -14,6 +14,9 @@ The goal is to match Godot's capability in **2D and 3D**.
 - **2D and 3D from the start:** a batched 2D renderer and a clustered forward+ PBR 3D renderer, glTF import, our own Ada
   2D physics, and Jolt-backed 3D physics behind an Ada API. 2D ships first, then 3D on the same architecture.
 - **The editor is the first product:** sold on Steam as software, localised in all seven languages, bundled with template packs.
+- **Signature features beyond Godot:** projective geometry (homogeneous math, perspective guides, 2.5D cameras),
+  fractals (seeded noise, L-systems, IFS, shader nodes), and density fields (fog, scattering, heat maps, terrain).
+  See [Design document §19](docs/DESIGN.md).
 - **AI-tool friendly (core feature):** text formats with JSON Schemas, a headless `poncelet` CLI with JSON output,
   and a built-in local MCP server, so users drive it with their own AI tools. No bundled AI model and no stored AI keys.
 - **Template packs** (`.ponpack`): existing games folded in as starter templates for new projects.

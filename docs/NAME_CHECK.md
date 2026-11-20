@@ -1,6 +1,8 @@
 # Name check (2026-11-19)
 
-**Decision: Poncelet was chosen by Robert Boettcher on 2026-11-19.** Package prefix `Pc`, repo `poncelet`.
+**Decision: Poncelet was chosen by Robert Boettcher on 2026-11-19 and confirmed kept on 2026-11-20**,
+because Jean-Victor Poncelet founded projective geometry, which (with fractals and density) is a signature
+focus of the engine beyond Godot (see `docs/DESIGN.md` §19). Package prefix `Pc`, repo `poncelet`.
 
 Method: GitHub repository search (`<name> engine`, `<name> game engine`, name-only), Steam store search
 (`store.steampowered.com/api/storesearch`), plus web searches for "<name> engine/game engine".

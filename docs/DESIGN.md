@@ -1,7 +1,7 @@
-# Poncelet Engine — Design Document (Draft 0.8)
+# Poncelet Engine — Design Document (Draft 0.9)
 
 > Name: **Poncelet** (chosen 2026-11-19, after Jean-Victor Poncelet, projective geometry; see `docs/NAME_CHECK.md`).
-> Author: Robert Boettcher, with Grok Bot. Status: draft 0.8, 2026-11-19 (reference implementations from four bot-built games folded in: concrete host ABI v1, event ring, buffers, F9 report format, web host standard, seed parity, Reckoning as first template pack and M1–M4 acceptance test, Appendix B; web-safe Ada subset + numeric host ABI from proven Ada-to-WASM bots; games target all platforms: desktop, web, Android, iOS, consoles via partners, XR; renderer tiers; RTL later; community asset library; multiplayer, dynamic GI, video, visual shaders and CSG moved into the first sellable release; step plan in docs/IMPLEMENTATION_PLAN.md; Godot parity audit + matrix in Appendix A; full 2D + 3D; editor is the first Steam product; Linux-first development, Steam/Apple deferred; AI-tool support is a core feature).
+> Author: Robert Boettcher, with Grok Bot. Status: draft 0.9, 2026-11-20 (name kept: Poncelet, after Jean-Victor Poncelet and projective geometry; signature features *beyond* Godot: projective geometry, fractals, and density, §19 and Appendix A.21; plan updated. Prior 0.8: reference implementations from four bot-built games folded in: concrete host ABI v1, event ring, buffers, F9 report format, web host standard, seed parity, Reckoning as first template pack and M1–M4 acceptance test, Appendix B; web-safe Ada subset + numeric host ABI from proven Ada-to-WASM bots; games target all platforms: desktop, web, Android, iOS, consoles via partners, XR; renderer tiers; RTL later; community asset library; multiplayer, dynamic GI, video, visual shaders and CSG moved into the first sellable release; step plan in docs/IMPLEMENTATION_PLAN.md; Godot parity audit + matrix in Appendix A; full 2D + 3D; editor is the first Steam product; Linux-first development, Steam/Apple deferred; AI-tool support is a core feature).
 > Clean-room: Godot (MIT) was studied **for architecture only**. No Godot code, text, or assets are copied here.
 > Everything below describes our own design.
 
@@ -30,6 +30,9 @@ What makes it different:
 5. **AI-tool friendly by design.** Users drive Poncelet with their *own* AI tools (Cursor, Claude, ChatGPT, Grok,
    Copilot, ...) through text formats, a JSON CLI, and a built-in MCP server. Poncelet bundles no model and stores no AI keys (§12).
 6. **Localisation is built in, not bolted on.** All user-visible text goes through string IDs from day one.
+7. **Signature features beyond Godot.** Projective geometry, fractals, and density are first-class in the math core,
+   the renderer, the editor, and the tools API — not add-ons. This is the naming tie-in (Jean-Victor Poncelet
+   founded modern projective geometry) and the product's technical identity on top of Godot-level 2D/3D parity (§19).
 
 ## 2. Scope and non-goals
 
@@ -70,6 +73,11 @@ What makes it different:
 - **Template packs** bundled with the editor. Their contents will be decided later with Robert's other game bots.
 - Steamworks: for the editor product (achievements optional, Workshop for template packs later) and as a ready
   integration for users' games (achievements, stats, cloud saves, rich presence, overlay, language).
+- **Signature features beyond Godot (§19):** a projective math core and editor perspective tools, fractal
+  generators (noise, L-systems, IFS, escape-time shader nodes) and seeded fractal world generation, and
+  first-class density fields (volumetric fog/smoke, scattering, heat maps, editor painting, basic isosurface
+  terrain). Advanced items (Mandelbulb raymarching, SPH fluids, destructible voxels, portals, AR calibration)
+  are planned post-launch (M9), not cut from the product.
 
 ### Non-goals (for now)
 - **A mobile or browser version of the editor** (the editor is a desktop application).
@@ -120,9 +128,9 @@ shaping, codecs), `editor/` (built on the engine's own GUI), and `main/` (boot, 
 | pc-game-api : Systems, Events, Input actions, UI, Save/Load    |   Plain Ada, contracts
 +---------------------------------------------------------------+
 | pc-core (SPARK-ready)                                          |
-|  Math | World/ECS | Physics 2D/3D API | Anim | Nav | Serial    |   no platform deps
-|  Rules | I18n | Scene 2D/3D | Asset DB | Template packs          |
-|  RNG (deterministic) | Bounded containers | Time/Step           |
+|  Math (incl. projective) | World/ECS | Physics 2D/3D API | Anim | Nav    |   no platform deps
+|  Serial | Rules | I18n | Scene 2D/3D | Asset DB | Template packs  |
+|  RNG | Noise / Fractal | Density fields | Bounded containers | Time/Step |
 +---------------------------------------------------------------+
 | pc-services (Ada interfaces, handles only)                     |
 |  Render (2D batch + 3D clustered) | Physics3D backend | Text   |   SPARK_Mode Off
@@ -174,6 +182,10 @@ C++ host.
   Example: normalising requires length > epsilon.
 - Large 3D worlds: an optional `Long_Float` (double) world-position mode with camera-relative rendering, similar
   in spirit to large-world builds elsewhere. Decided per project.
+- **Projective geometry is first-class** in `Pc.Math.Projective`: homogeneous points, lines and planes (including
+  points at infinity), incidence, cross-ratio, duality, and projective transforms. The 3D camera model and the
+  editor's perspective tools are built on these types, not on ad-hoc 4×4 tricks (§19.1). Euclidean Vec/Mat/Quat
+  remain the everyday API; projective types are used where the geometry needs them.
 - No exceptions on the hot path. Contracts express the domain.
 
 ### 6.2 Rendering (service; SDL_GPU backend)
@@ -184,8 +196,10 @@ be composited in the same frame: a 2D canvas over or under a 3D world, and 3D in
 - GPU resources via SDL_GPU (Vulkan/Metal/D3D12) behind Ada handles: buffers, textures, samplers, pipelines.
 - A small **render graph** (passes declared per frame, with automatic barriers and transient render targets)
   so 2D, 3D, shadows, and post-processing are just passes.
-- **Cameras:** 2D (zoom, rotation, limits, smoothing) and 3D (perspective, orthographic, frustum offset).
-  Multiple viewports and render-to-texture (minimaps, split-screen, editor previews).
+- **Cameras:** 2D (zoom, rotation, limits, smoothing) and 3D (perspective, orthographic, frustum offset), with a
+  **projective camera model** underneath (§19.1): homogeneous clip space, a robust infinite far plane, and
+  first-class 2.5D / fake-3D projection modes. Multiple viewports and render-to-texture (minimaps, split-screen,
+  editor previews).
 - **Shaders:** written once in HLSL and compiled offline to SPIR-V/MSL/DXIL with SDL_shadercross. A **material
   system** with uber-shader permutations plus user shaders in a small Poncelet shader dialect, compiled by the
   editor. Pipeline cache per GPU.
@@ -387,6 +401,8 @@ Godot users expect "edit a script, see it immediately". We match that without an
   spawning, and opening URLs.
 - **Production:** video playback (Theora or AV1), deterministic movie capture, runtime loading of user content,
   mod/DLC packs, an object/memory profiler, Tracy integration, and shell completion.
+- **Signature features (§19):** projective math and editor guides, fractal generators and shader nodes, and
+  density-field resources (fog, scattering, heat maps, isosurfaces). These go *beyond* the Godot-parity list.
 
 ### 6.15 Seeded, replayable simulation, automated players, and batch reports
 First requested by Robert's Hood Simulator and Colony4X bots. Draft 0.8 makes it concrete using the four reference
@@ -846,8 +862,9 @@ with template packs. So the editor gets product-level UX, not internal-tool UX.
 
 **Feature set for the first sellable release (2D complete, 3D complete or early access per milestone)**
 - Project manager (create from template, open recent, import template pack, version check).
-- Scene editor with **2D viewport** (gizmos, snapping, tilemap painter, 2D light/occluder editing) and
-  **3D viewport** (move/rotate/scale gizmos, grid and snapping, camera fly/orbit, lighting preview, lightmap baking).
+- Scene editor with **2D viewport** (gizmos, snapping, tilemap painter, 2D light/occluder editing, **perspective
+  grids and horizon / vanishing-point guides**) and **3D viewport** (move/rotate/scale gizmos, grid and snapping,
+  camera fly/orbit, lighting preview, lightmap baking, **density-field painting and isosurface preview**).
 - Scene tree dock, inspector (generated from component descriptors), asset browser with thumbnails, and an import
   dock (glTF, textures, audio, fonts with re-import settings).
 - Animation editor (timeline, curves), material editor (parameters first, node graph later), particle editor.
@@ -880,7 +897,7 @@ one Ada **tools API** (`Pc.Tools`) exposed three ways, so the GUI, scripts, and 
 | Data | File | Format |
 |---|---|---|
 | Scenes (2D/3D) | `*.pscene` | canonical JSON |
-| Resources (materials, physics shapes, animations, themes, tilesets) | `*.pres` | canonical JSON |
+| Resources (materials, physics shapes, animations, themes, tilesets, **density fields**) | `*.pres` | canonical JSON |
 | Import settings per asset | `<asset>.pimport` | canonical JSON |
 | Project settings, input map | `project.toml` | TOML (stable key order) |
 | Templates / template packs | `template.toml`, `pack.toml` | TOML |
@@ -898,7 +915,9 @@ one Ada **tools API** (`Pc.Tools`) exposed three ways, so the GUI, scripts, and 
 - Commands: `new` (from template), `build`, `run` (with `--world-seed`/`--ai-seed`), `sim` (batch automated-player
   runs writing report files, §6.15), `replay` (record/verify `.preplay`), `test` (incl. `--replays`), `export`, `screenshot` (render a scene/camera to PNG
   headlessly or offscreen), `validate`, `inspect` (scene tree, entity, component, resource, settings), `fmt`,
-  `docs` (API lookup), `schema`, `mcp` (start the MCP server).
+  `docs` (API lookup), `schema`, `mcp` (start the MCP server), **`gen`** (seeded fractal noise, L-systems, IFS,
+  density fields, and world chunks, §19), and **`projective`** (incidence, cross-ratio, homography, and camera
+  queries, JSON in / JSON out).
 - **Machine-readable output:** `--json` gives one JSON object (or NDJSON for streams) with a stable, versioned
   envelope `{ "ok", "command", "version", "result", "diagnostics": [...] }`. Exit codes are documented.
 - **Precise diagnostics:** every error has `file`, `line`, `column`, `end_line`/`end_column`, `code` (e.g.
@@ -917,6 +936,9 @@ one Ada **tools API** (`Pc.Tools`) exposed three ways, so the GUI, scripts, and 
   - Run: `play` / `stop` play-in-editor, `step_frames`, `send_input` (scripted input), `capture_screenshot`,
     `capture_frames` (short sequence), `read_logs`, `run_tests`, `build` (returns structured diagnostics),
     `run_sim` (batch automated-player runs, §6.15), `debug_report` (F9-style report), `verify_replay`.
+  - Signature features (§19): `projective_query` (incidence, cross-ratio, homography, camera),
+    `set_perspective_guides`, `generate_fractal` (noise, L-system, IFS, escape-time preview),
+    `sample_density`, `paint_density`, `scatter_from_density`, `generate_world` (seeded chunk / terrain).
   - Knowledge: `api_docs` (search the generated Ada API reference including contracts), `schema`, `examples`.
 - **Resources:** project files, schemas, logs, and docs exposed as MCP resources. **Prompts:** curated task prompts
   (e.g. "add a component", "localise a scene").
@@ -1079,16 +1101,16 @@ The step-by-step plan with verification commands is in **`docs/IMPLEMENTATION_PL
 
 | M | Name | Contents | Exit criterion |
 |---|---|---|---|
-| **M0** | Skeleton + CLI | gprbuild projects (Alire optional), `pc-core` (Math 2D+3D, World tables, i18n catalogs with plurals, text scene round-trip), coding rules, LICENSE, `AGENTS.md`. **`poncelet` CLI v0:** `version`, `new`, `validate`, `run --headless`, `test`, `--json`, `--lang`. CI: Linux build+tests, Windows/macOS compile; **portability rules** (`core.adc`: no tasking/allocators/OS access in core; console-friendly service boundaries); `run --headless --world-seed --ai-seed` (seeded, exactly replayable); **numeric host ABI v0** (`Pc.Host_ABI`) + last-chance handler (§10.5) | `./build.sh` + `./run-tests.sh` green on Linux Mint; `poncelet run --headless` prints a deterministic hash |
+| **M0** | Skeleton + CLI | gprbuild projects (Alire optional), `pc-core` (Math 2D+3D, **`Pc.Math.Projective`** (§19.1), World tables, i18n catalogs with plurals, text scene round-trip), coding rules, LICENSE, `AGENTS.md`. **`poncelet` CLI v0:** `version`, `new`, `validate`, `run --headless`, `test`, `--json`, `--lang`. CI: Linux build+tests, Windows/macOS compile; **portability rules** (`core.adc`: no tasking/allocators/OS access in core; console-friendly service boundaries); `run --headless --world-seed --ai-seed` (seeded, exactly replayable); **numeric host ABI v0** (`Pc.Host_ABI`) + last-chance handler (§10.5) | `./build.sh` + `./run-tests.sh` green on Linux Mint; `poncelet run --headless` prints a deterministic hash |
 | **M1** | Pixels + formats | Local SDL3 build script, SDL3 binding, window/input, SDL_GPU render core + render graph, 2D batcher, fixed-step loop, offline shader pipeline. **All text formats + JSON Schemas** (`.pscene`, `.pres`, `.pimport`, `.ponpack`), canonical writer; CLI `screenshot`, `inspect`, `fmt`, `schema`; **WebAssembly toolchain spike** (headless core in the browser/Node, same hash as native); render service with a `Render_Method` interface for three tiers | A sprite moves at 60 Hz on Mint; `poncelet screenshot` writes a PNG; schemas validate samples |
 | **M2** | World, UI, i18n, MCP | Generic component stores, hierarchy, events/tags, FreeType/HarfBuzz text + CJK fonts, pseudo-locale, UI toolkit (containers, widgets, themes, docking), editor shell + project manager, undo system, **MCP server v1**, generated API docs, GNATprove flow in CI | Editor shell switches live between seven languages; an AI client creates an entity via MCP and it can be undone |
-| **M3** | 2D complete + hot reload | Own Ada 2D physics, 2D lights/shadows, tilemaps + terrains, particles, animation + tweens, audio mixer v1, save/load, input rebinding, rich text, **game-library hot reload**, editor 2D viewport, inspector, asset import, localisation editor, play-in-editor; input model incl. touch, gestures, and virtual controls (testable with mouse emulation); logical-order text layout (RTL-ready); **`Pc.Random`, replay record/playback (`.preplay`), golden replay tests, autoplayer interface, `poncelet sim` batch runs with per-game report files (F9-style), in-game F9 debug report** | A 2D template game built and live-edited entirely in the editor |
+| **M3** | 2D complete + hot reload | Own Ada 2D physics, 2D lights/shadows, tilemaps + terrains, particles, animation + tweens, audio mixer v1, save/load, input rebinding, rich text, **game-library hot reload**, editor 2D viewport, inspector, asset import, localisation editor, play-in-editor; input model incl. touch, gestures, and virtual controls (testable with mouse emulation); logical-order text layout (RTL-ready); **`Pc.Random`, replay record/playback (`.preplay`), golden replay tests, autoplayer interface, `poncelet sim` batch runs with per-game report files (F9-style), in-game F9 debug report**; **fractal generators** (`Pc.Noise` fBm/ridged/domain-warp, Diamond-square, L-systems, IFS) tied to world seeds; **2D projective editor tools** (perspective grids, horizon/vanishing-point guides, 2.5D projection mode) (§19) | A 2D template game built and live-edited entirely in the editor |
 | **M4** | Export + tooling | Exporter with `.ppak` (Linux tested on Mint; Windows/macOS built in CI, unsigned), Steam stub, template-pack import, profiler + Tracy, movie capture, module-stripped exports; **compatibility renderer 2D** (GL 3.3 / GLES3 / WebGL2), **web export of 2D games** (WASM + WebAudio + DOM input + IndexedDB), githack-hostable demos; cross-platform determinism checks of replays in CI; single-file HTML web export with version stamp + githack check/commit-pinned fallback; release check policy (checks off only for SPARK Silver units) | Exported 2D template runs on Mint; Windows/macOS CI artifacts pass smoke tests |
-| **M5** | 3D foundation + CSG | Clustered forward+ renderer, PBR, glTF import, cameras, lights, cascaded shadows, sky/IBL, MSAA/FXAA/TAA, Jolt 3D physics behind Ada API, 3D viewport + gizmos, primitive meshes, mesh builder, **CSG (Manifold)**, collision generation | A glTF scene with CSG blockout, lit and shadowed, with physics, editable in the editor |
-| **M6** | 3D complete + video + networking base | Skeletal animation + animation graph + IK/retargeting, lightmap baker, reflection probes, SSAO/SSIL/SSR, decals, volumetric fog, GPU particles, LOD/culling, navmesh + avoidance, GridMap, FBX import, FSR1, sockets/HTTP(S)/WebSocket, **video playback**, audio parity (buses, effects, 3D audio, adaptive music); **mobile renderer tier**, **compatibility renderer 3D**, **web 3D export**, **Android dev builds** (debug APK, lifecycle, touch, sensors), **iOS CI compile** | 3D template game playable and exportable, with an in-game video cutscene |
-| **M7** | Advanced features | **Dynamic GI** (VoxelGI-style volumes + probe-based large-world GI), **visual shader editor** (node graph → shader dialect), **high-level multiplayer** (replication, typed remote calls, ENet, UPnP, multi-instance testing, network profiler), editor plugins + C ABI extensions, accessibility (AccessKit); **asset/plugin package format + library client**; XR preparation (multi-view render graph, XR camera, action mapping); controller-first UI focus navigation | A multiplayer template runs on two instances on one machine; a dynamically lit 3D scene uses node-graph materials |
+| **M5** | 3D foundation + CSG | Clustered forward+ renderer, PBR, glTF import, cameras, lights, cascaded shadows, sky/IBL, MSAA/FXAA/TAA, Jolt 3D physics behind Ada API, 3D viewport + gizmos, primitive meshes, mesh builder, **CSG (Manifold)**, collision generation; **projective camera model** and **infinite far plane** built on `Pc.Math.Projective` (§19.1) | A glTF scene with CSG blockout, lit and shadowed, with physics, editable in the editor |
+| **M6** | 3D complete + video + networking base | Skeletal animation + animation graph + IK/retargeting, lightmap baker, reflection probes, SSAO/SSIL/SSR, decals, volumetric fog, GPU particles, LOD/culling, navmesh + avoidance, GridMap, FBX import, FSR1, sockets/HTTP(S)/WebSocket, **video playback**, audio parity (buses, effects, 3D audio, adaptive music); **mobile renderer tier**, **compatibility renderer 3D**, **web 3D export**, **Android dev builds** (debug APK, lifecycle, touch, sensors), **iOS CI compile**; **density-field resources** (sparse/dense, text serialisation, painting, scattering, heat maps, physics queries, fog/smoke driven by fields) and **homography-based decals/projectors** (§19) | 3D template game playable and exportable, with an in-game video cutscene |
+| **M7** | Advanced features | **Dynamic GI** (VoxelGI-style volumes + probe-based large-world GI), **visual shader editor** (node graph → shader dialect, **fractal noise and escape-time nodes**), **high-level multiplayer** (replication, typed remote calls, ENet, UPnP, multi-instance testing, network profiler), editor plugins + C ABI extensions, accessibility (AccessKit); **asset/plugin package format + library client**; XR preparation (multi-view render graph, XR camera, action mapping); controller-first UI focus navigation; **seeded fractal/density world generation**, fractal density volumes, basic marching-cubes isosurfaces, and mobile/web fractal budgets (§19) | A multiplayer template runs on two instances on one machine; a dynamically lit 3D scene uses node-graph materials |
 | **M8** | Beta, maturity gate, platforms + Steam (**first sellable**) | **8a Beta:** onboarding, tutorials, crash recovery, soak tests, native-speaker localisation QA, template packs finalised + signed, EULA, docs. **8b Maturity gate:** no known crashers, formats frozen. **8c Release:** Steamworks + Apple sign-ups, real Steamworks body, macOS signing/notarisation, Windows signing (optional), Steam Runtime build, real-hardware tests on macOS/Windows, SteamPipe, store page in seven languages; **8c also:** Play Store signing/AAB, iOS device builds + App Store/TestFlight (needs Mac access + Apple account), curated paid template packs as DLC | Steam review passed; **Poncelet Editor + template packs released** |
-| **M9** | Post-launch | **OpenXR VR/AR**, **BiDi/RTL text + UI mirroring**, **community asset library service**, **console ports via partners**, WebGPU for web/mobile, mobile store services (IAP, ads, notifications), FSR2, texture streaming, glTF export, Workshop, mic/TTS, MIDI, webcam, WebRTC, VRS, ARM64 desktop, dedicated-server exports, own Ada 3D physics, SPARK proofs | — |
+| **M9** | Post-launch | **OpenXR VR/AR**, **BiDi/RTL text + UI mirroring**, **community asset library service**, **console ports via partners**, WebGPU for web/mobile, mobile store services (IAP, ads, notifications), FSR2, texture streaming, glTF export, Workshop, mic/TTS, MIDI, webcam, WebRTC, VRS, ARM64 desktop, dedicated-server exports, own Ada 3D physics, SPARK proofs; **advanced signature features:** SDF raymarched fractals (Mandelbulb) with LOD, infinite-zoom perturbation/double precision, SPH fluid density, destructible voxel terrain and dual contouring, anamorphic and non-standard projections, portal/mirror math, AR camera-calibration homographies (§19.5) | — |
 
 **Platform placement (draft 0.7):** web 2D in M4 and 3D in M6, Android/iOS dev builds in M6 with store signing in
 M8 (gated), and consoles, OpenXR, RTL, and the community library post-launch in M9. Reasons are in §2 and §13.3.
@@ -1098,8 +1120,10 @@ M3 (`poncelet sim` batch, F9 report) and M4 (stamped single-HTML web export); Ro
 parity in M5, Colony4X and Hood Simulator with seed parity in M7, and all four packs are finalised and signed in M8
 (§13.4, Appendix B).
 
-**Schedule realism:** this is a multi-year roadmap. Adding the five features before launch moves M8 out by roughly
-two to three milestone-lengths compared with draft 0.5. The mitigations are reusing proven C libraries (Jolt,
+**Schedule realism:** this is a multi-year roadmap. Adding the five pre-launch parity features moved M8 out by roughly
+two to three milestone-lengths compared with draft 0.5. Draft 0.9 adds signature work (projective math, fractal
+generators, density fields) across M0–M7, with the heavy advanced items (Mandelbulb, SPH, destructible voxels)
+kept in M9 so the first-release cut stays realistic. The mitigations are reusing proven C libraries (Jolt,
 Manifold, ENet, dav1d/Theora, cgltf), small verifiable steps, and AI-assisted development through the CLI and MCP.
 
 ## 17. Risks
@@ -1112,9 +1136,19 @@ Manifold, ENet, dav1d/Theora, cgltf), small verifiable steps, and AI-assisted de
   SDL_GPU usage conservative and test early with community testers if possible.
 - **CJK text quality** (line breaking, IME, font size): handle in M2 with a native-speaker review.
 - **Determinism with floats across OSes:** use fixed point where it matters, and avoid `-ffast-math`.
-- **Scope (Godot-level 2D + 3D + polished editor):** this is the largest risk. Mitigations: SDL_GPU + Jolt + cgltf
-  instead of writing our own; ship 2D first; allow 3D as early access at M8; cut dynamic GI and node-graph
-  editors to post-v1.
+- **Scope (Godot-level 2D + 3D + polished editor + signature features):** this is the largest risk. Mitigations:
+  SDL_GPU + Jolt + cgltf instead of writing our own; ship 2D first; allow 3D as early access at M8 if needed;
+  keep first-release signature work to the math core, generators, density fields and editor tools (§19.5), and
+  leave Mandelbulb raymarching, SPH, destructible voxels, portals, and AR calibration in M9. Dynamic GI and the
+  visual shader editor stay pre-launch (decided 2026-11-19).
+- **Signature-feature cost on mobile and web:** fractal shaders, volumetric density, and isosurfaces can blow
+  frame-time and memory budgets. Mitigations: per-tier quality presets and hard caps (§19), editor warnings when
+  a material or field exceeds the target tier, baked or lower-resolution fallbacks on the compatibility renderer,
+  and golden-frame plus budget tests on the mobile and WebGL2 paths.
+- **Projective numerics:** homogeneous coordinates and an infinite far plane are easy to get subtly wrong
+  (w=0, cancellation, reversed depth). Mitigations: contracts on w and on incidence tests, known-answer tests
+  (cross-ratio, duality, vanishing points), and screenshot tests of the infinite far plane on all three renderer
+  tiers.
 - **Bundling GNAT with a commercial editor:** use the FSF GCC toolchain under the GCC Runtime Library Exception
   and confirm redistribution terms (GPLv3 for compiler binaries means source offer obligations for the toolchain itself).
 - **Ada toolchains for web, iOS, and consoles:** GNAT-LLVM for wasm32 and arm64-apple-ios is less mature than
@@ -1136,7 +1170,9 @@ Manifold, ENet, dav1d/Theora, cgltf), small verifiable steps, and AI-assisted de
    template packs. **New, to confirm:** the end-user licence for games made with Poncelet. Proposal: users own and may
    sell their games royalty-free, the runtime may be redistributed inside exported games, and engine/editor source
    may not be redistributed (§15).
-4. ~~Final name~~ **Answered:** Poncelet.
+4. ~~Final name~~ **Answered (2026-11-19) and confirmed kept (2026-11-20):** Poncelet, after Jean-Victor Poncelet
+    and projective geometry. Memorability was raised and accepted. Signature focus: projective geometry, fractals,
+    and density (§19).
 5. ~~macOS distribution / Apple Developer ID~~ **Answered (2026-11-19): deferred.** No sign-ups (Apple or Steam)
    until Poncelet is stable and mature. Development is on Linux Mint, and macOS/Windows are compile and smoke-checked in CI.
    Signing, notarisation, and Steam come in M8.
@@ -1164,12 +1200,195 @@ Manifold, ENet, dav1d/Theora, cgltf), small verifiable steps, and AI-assisted de
 18. **Template code ownership:** may Reckoning, Roguelike Jungle, Colony4X and Hood Simulator content ship inside
     the commercial editor as template packs under the Poncelet EULA (all are yours), and which of them should be paid
     DLC rather than bundled?
+19. **Signature-feature cut for the first release:** draft 0.9 puts the projective math core, editor perspective
+    guides, 2.5D mode, fractal noise/L-systems/IFS, escape-time shader nodes, and density fields (fog, scattering,
+    heat maps, painting, basic marching cubes) in M0–M7, before M8. Mandelbulb raymarching, infinite-zoom
+    perturbation, SPH fluids, destructible voxels, dual contouring, portals/mirrors, anamorphic projections, and
+    AR camera calibration are M9 (§19.5). Confirm, or pull any of those into pre-launch?
+20. **Signature showcase pack:** should the first Steam release bundle a small official template that exercises
+    the three pillars (perspective guides, seeded fractal world, painted density field), or is a tutorial plus
+    docs enough?
+
+## 19. Signature features beyond Godot
+
+Poncelet's baseline is Godot-level 2D and 3D for typical indie games (Appendix A). On top of that, three pillars
+are first-class in the engine, the editor, and the tools API: **projective geometry**, **fractals**, and
+**density**. They are why the product is called Poncelet, and they are designed into `pc-core` rather than
+shipped as plugins.
+
+Jean-Victor Poncelet (1788–1867) founded modern projective geometry. Naming the engine after him is not just
+ornament: homogeneous coordinates, points at infinity, incidence, duality and the cross-ratio are types and
+operations in `Pc.Math`, and the camera and perspective tools are built on them.
+
+**Rules that apply to all three pillars**
+- **Plain Ada, contracts, SPARK-ready, platform-free.** Types and algorithms live in `pc-core`. They build with
+  `gprbuild -XPLATFORM=none`, use no pointers, heap, tasking, or `Text_IO`, and state `Pre`/`Post` and ranged
+  subtypes (§9, §10.5). Shader and GPU work sits in services, behind handles.
+- **Deterministic and seeded.** Anything that generates world content or affects simulation takes the project's
+  **world seed** (and a documented sub-stream), is bit-stable across editor, CLI, MCP, and exported games, and
+  contributes to the 64-bit state hash (§6.15). Visual-only shader previews may use ordinary floats; anything
+  that feeds gameplay prefers integer or fixed-point paths, or a documented float exception.
+- **Renderer tiers (§6.2a).** High-end (clustered), mobile, and compatibility (GL 3.3 / GLES3 / WebGL2) all
+  accept the same scenes and resources. Each feature names what every tier actually does, and the editor warns
+  when a resource exceeds the target tier.
+- **AI-tool visible.** Resources are text (`.pres` / `.pscene`) with JSON Schemas. The CLI (`poncelet gen`,
+  `poncelet projective`) and MCP tools in §12 expose the same operations as the editor.
+- **Tests.** Known-answer vectors, golden hashes, and (where it is a picture) golden screenshots per renderer
+  tier, including a WebGL2 path once that export exists.
+
+### 19.1 Projective geometry
+
+**What it gives game makers.** A consistent language for perspective: vanishing points, horizons, points at
+infinity, projections from 3D onto a picture plane, and mappings between planes (homographies). That helps 2D
+artists and level designers lay out believable perspective, makes 2.5D and fake-3D modes first-class instead of
+a shader trick, and gives 3D cameras a numerically honest far plane and projector/decal math.
+
+**Engine and editor features**
+- Homogeneous points, lines and planes as first-class math types, including **points at infinity**.
+- Incidence (meet / join), **cross-ratio**, and **duality** utilities with contracts.
+- Projective transforms and a **camera model** built on them (perspective, orthographic, 2.5D / fake-3D
+  projection modes).
+- Editor **vanishing-point and perspective tools:** perspective grids, horizon and vanishing-point guides for
+  2D art and level design.
+- **Homography-based decals, projectors, and texture mapping** (map an image onto a quad or from one plane
+  onto another).
+- A **robust infinite far plane** (reversed-Z / infinite projection) so distant objects and skies do not fight
+  the depth buffer.
+- Later (M9, §19.5): anamorphic and other non-standard projections, portal and mirror reflection math, and
+  camera-calibration / AR-friendly homographies (with OpenXR).
+
+**In the Ada core.** `Pc.Math.Projective` defines `Point_H`, `Line_H`, `Plane_H`, and `Projective_Transform` as
+records of homogeneous coordinates. Points at infinity are ordinary values with `W = 0`, guarded by contracts
+(no silent division by zero; callers use `Is_Finite` / `Is_At_Infinity`). Meet, join, dual, and `Cross_Ratio`
+have `Pre`/`Post` that state incidence and invariance. v1 uses IEEE `Float` (and `Long_Float` where calibration
+or large worlds need it) with documented epsilon contracts; a rational/integer homogeneous path for exact
+tool-side incidence is a later SPARK candidate, not a first-release requirement. The package is platform-free
+and is a planned SPARK graduate.
+
+**Renderer tiers.** The projective camera and infinite far plane are used on every tier that draws 3D
+(high-end, mobile, compatibility, WebGL2). 2.5D projection modes and 2D guides are CPU/editor work plus a
+small vertex transform, so they work on all tiers. Homography projectors use the clustered decal path on
+high-end, a cheaper projector on mobile, and a single-projector fallback on compatibility / WebGL2.
+
+**CLI / MCP.** `poncelet projective` and MCP `projective_query` / `set_perspective_guides` answer incidence,
+cross-ratio, vanishing-point, and homography queries as JSON, and write guides into a scene.
+
+**Acceptance (first release).** Known-answer tests: a documented complete quadrangle's cross-ratio; duality
+is involutive; a point at infinity lies on a given line; a homography maps four documented points to four
+others. A 2D scene with vanishing-point guides round-trips in `.pscene`. A 3D demo with a distant object and
+an infinite far plane produces a stable golden screenshot on high-end and on the compatibility / WebGL2 path
+(no far-plane clipping, no depth fighting with the sky).
+
+### 19.2 Fractals
+
+**What it gives game makers.** Procedural plants, terrain, patterns, and spaces that stay interesting at many
+scales, all driven by the world seed. Artists get visual-shader nodes; designers get seeded generators that
+the CLI and an autoplayer can batch-test.
+
+**Engine and editor features**
+- **L-systems** for plants and trees (turtle interpretation to meshes or 2D strokes, iteration cap, seed).
+- **Iterated function systems (IFS)** for self-similar shapes.
+- **Fractal noise:** fBm, ridged, and domain-warped noise for terrain and materials, plus **Diamond-square**
+  heightmaps, all in `Pc.Noise` / `Pc.Fractal` (pure Ada).
+- **Escape-time** Mandelbrot / Julia materials as **visual shader editor nodes** (and equivalent dialect code).
+- **Fractal level and world generation** tied to the world seed: chunks, biomes, and tile or height layers that
+  hash-match across platforms.
+- **Budget and LOD guarantees** on mobile and web: quality presets, iteration caps, and editor warnings.
+- Later (M9): SDF raymarched fractals (e.g. a Mandelbulb) as a renderer feature with LOD, and an infinite-zoom
+  precision path (double plus perturbation) for deep escape-time zooms. The strategy is documented now; the
+  heavy implementation is post-launch.
+
+**In the Ada core.** Generators are deterministic functions of `(world seed, sub-stream, parameters)` and
+write bounded outputs (degree caps on L-systems, iteration caps on IFS, grid sizes on noise). Contracts enforce
+those bounds. Shader nodes compile to the Poncelet shader dialect; they are data in `.pres`, not generated Ada
+on the hot path. World generation that affects gameplay is hashed into the simulation state (§6.15).
+
+**Renderer tiers.** Noise, L-systems, and IFS produce meshes, instances, heightmaps, or textures — those run
+on every tier. Escape-time looks are fragment shaders and run on WebGL2 as well as high-end and mobile, with
+iteration caps per quality preset. Raymarched SDF fractals (M9) are high-end first, with a tight iteration
+budget on mobile and a pre-baked mesh or impostor fallback on compatibility.
+
+**CLI / MCP.** `poncelet gen noise|lsystem|ifs|world --world-seed …` and MCP `generate_fractal` /
+`generate_world` write resources or scene chunks and print the content hash.
+
+**Acceptance (first release).** The same seed and parameters produce the same hash on Linux and in the WASM
+spike / web export for noise, Diamond-square, a documented L-system tree, and an IFS. A visual-shader graph
+with fBm and a Julia node compiles and renders a golden screenshot on high-end and on WebGL2 at the "low"
+budget preset. A budget test fails the build if a mobile/web preset exceeds its iteration or sample cap.
+
+### 19.3 Density
+
+**What it gives game makers.** A single **density-field** resource that many systems can read: fog and smoke,
+vegetation and crowd placement, AI influence / heat maps, physics queries ("how thick is it here?"), and, at a
+basic level, terrain isosurfaces. Artists paint it; tools generate it from noise or fractals; the file is text
+and deterministic.
+
+**Engine and editor features**
+- Density fields as a first-class resource: scalar and vector volumes, dense or sparse grids, stored as a
+  typed `.pres` (canonical JSON, optional binary cache under `.poncelet/cache/`).
+- **Volumetric fog and smoke** (and simple cloud volumes using the same field) can be driven by a density field (extending the froxel fog volumes of M6).
+- **Scattering:** vegetation, props, and crowds placed from a density map, seeded and repeatable.
+- **AI influence / heat maps** and **density-aware physics queries** (point sample, filtered query, ray march
+  through a field) in `pc-core`.
+- **Editor painting** of density (2D maps and 3D volumes) with brush, erase, and fill-from-generator.
+- **Basic isosurface terrain** from a scalar field (marching cubes) in the first release.
+- Later (M9): dual contouring, destructible voxel terrain, and SPH-style particle / fluid density.
+
+**In the Ada core.** `Pc.Density` is a bounded, platform-free resource: resolution, bounds, sparsity, and
+sample values are all under contracts. Sampling is a pure function. Serialisation is canonical and
+order-stable so two saves of the same field match byte-for-byte after `poncelet fmt`. Fields that affect
+simulation are included in the state hash. Painting and generation are editor/CLI commands (undoable).
+
+**Renderer tiers.** Sampling, scattering, heat maps, and physics queries are core work and run everywhere,
+including headless and web. Volumetric lighting of a field uses froxel fog on high-end, a lower-resolution
+or half-res volume on mobile, and baked slices or a cheaper 2D/height fog fallback on compatibility / WebGL2.
+Marching-cubes meshes are ordinary meshes once built, so they draw on all tiers; generation cost is budgeted
+and can be baked at edit time.
+
+**CLI / MCP.** `poncelet gen density` and MCP `sample_density`, `paint_density`, `scatter_from_density` read
+and write `.pres` fields and placement results, all schema-validated.
+
+**Acceptance (first release).** A painted or generated field round-trips through `.pres` with a stable hash.
+The same seed places the same scatter set on native and WASM. A point-sample and a ray-march query match known
+answers. A fog-volume demo driven by a field renders on high-end and degrades without crashing on
+compatibility / WebGL2. A small marching-cubes mesh from a documented field matches a golden hash.
+
+### 19.4 Interactions
+
+The pillars are meant to combine:
+- **Fractal density volumes:** a density field can be filled from fractal noise (fBm, ridged, domain-warp) or
+  an IFS, then used for fog, scattering, or an isosurface. First release supports this path; quality and sparse
+  storage improve over time.
+- **Projective rendering of density and fractals:** cameras, projectors, and 2.5D modes use the projective
+  model, so a density volume, a decal, or a fractal material is imaged through the same camera and
+  vanishing-point tools as everything else, including the infinite far plane.
+- **Seeded pipelines:** `generate_world` can chain noise → density field → scatter / isosurface in one
+  deterministic command, which `poncelet sim` and golden tests can replay.
+
+### 19.5 First release versus later
+
+| In the first sellable release (M8, built in M0–M7) | Post-launch (M9) |
+|---|---|
+| `Pc.Math.Projective` (homogeneous types, points at infinity, incidence, cross-ratio, duality, transforms) | Rational / exact incidence path for tools |
+| Projective camera model, infinite far plane, 2.5D / fake-3D projection modes | Anamorphic and other non-standard projections |
+| Editor perspective grids, horizon and vanishing-point guides | Portal and mirror reflection math as a scene feature |
+| Homography-based decals / projectors (basic, with a cheap fallback on compatibility) | Camera calibration and AR-friendly homographies (with OpenXR) |
+| Fractal noise (fBm, ridged, domain-warp), Diamond-square, L-systems, IFS, seeded world generation | SDF raymarched fractals (Mandelbulb and similar) with LOD |
+| Escape-time (Mandelbrot / Julia) visual-shader nodes, mobile/web budget caps | Infinite-zoom precision (double + perturbation) for deep escape-time zooms |
+| Density-field resource (scalar/vector, dense/sparse), text serialisation, editor painting | SPH-style particle and fluid density |
+| Fog/smoke driven by fields; scatter; AI heat maps; density physics queries | Destructible voxel terrain |
+| Basic marching-cubes isosurface from a density field | Dual contouring and higher-quality isosurfaces |
+| Fractal → density → scatter / mesh pipeline (v1 quality) | Higher-quality fractal density volumes |
+
+This cut keeps the naming promise visible in the first Steam release (math, tools, generators, density as a
+resource) without putting research-heavy render or simulation work on the critical path to M8.
 
 ## Appendix A. Godot 4.x parity matrix (audit of 2026-11-19, draft 0.5)
 
 Sources: the public Godot 4.x "List of features" documentation page and the directory layout of the Godot
 repository (`modules/`, `servers/`). Capabilities are **paraphrased in our own words**. No Godot text or code is copied.
-Draft 0.7 update: games now target all platforms (web, Android, iOS, consoles via partners, XR); three renderer
+Draft 0.9 update: Appendix A.21 lists **signature features beyond Godot parity** (projective geometry, fractals,
+density; §19). Draft 0.7 update: games now target all platforms (web, Android, iOS, consoles via partners, XR); three renderer
 tiers; RTL and the community asset library are scheduled post-launch. Draft 0.6 update: multiplayer, dynamic GI, video, the visual shader editor, and CSG were moved to pre-launch
 milestones (M5–M7). Everything still marked M9 is post-launch long tail.
 "0.4 status" is how DESIGN.md draft 0.4 covered each capability before this audit. The "Poncelet equivalent" column
@@ -1227,7 +1446,7 @@ Legend: C = covered, P = partial, M = missing, I = intentionally different.
 | SVG import with runtime re-rasterisation | M | SVG via a small rasteriser (e.g. lunasvg/nanosvg, MIT) for icons and DPI-aware textures | M5 |
 | GPU and CPU particles (2D) | C | Particles (§6.2) | M3 |
 | 2D HDR, debanding, HDR output | M | Optional HDR canvas, dithering; HDR display output when SDL3 exposes it | M6 |
-| Pseudo-3D in 2D | M | Y-sort + z-index + 2.5D helpers in editor | M6 |
+| Pseudo-3D in 2D | M | Y-sort + z-index + first-class 2.5D / fake-3D projection modes and vanishing-point guides (§19.1) | M3 (guides, 2.5D mode) / M5 (projective camera) |
 
 ### A.4 2D tools
 
@@ -1255,10 +1474,10 @@ Legend: C = covered, P = partial, M = missing, I = intentionally different.
 | SDFGI (large-world dynamic GI) | P | Probe-based dynamic GI (DDGI-style) as our large-world equivalent | M7 |
 | SSIL (screen-space indirect) | M | SSIL pass alongside SSAO | M6 |
 | Reflection probes, SSR, mixed reflections | C | §6.2 | M6 |
-| Decals (albedo/normal/ORM/emission, clustered) | M | Clustered decals with fade and channel masks | M6 |
+| Decals (albedo/normal/ORM/emission, clustered) | M | Clustered decals with fade and channel masks; homography-based projectors (§19.1) go beyond basic decals | M6 |
 | Sky: HDRI, procedural, physical sky, custom sky shaders | P | Physically based sky + custom sky shaders | M5–M6 |
 | Depth and height fog, aerial perspective, sun scatter | P | Height fog, sky-tinted fog, sun scatter | M5 |
-| Volumetric fog + fog volumes with shaders | P | Froxel volumetric fog reusing light clusters; fog volume component (box/ellipsoid/cone/cylinder/3D texture) | M6 |
+| Volumetric fog + fog volumes with shaders | P | Froxel volumetric fog reusing light clusters; fog volume component (box/ellipsoid/cone/cylinder/3D texture); can be driven by density-field resources (§19.3) | M6 |
 | GPU particles: sub-emitters, trails, attractors, collision (SDF/heightmap), custom shaders | P | Compute particles with sub-emitters, trails, attractors, SDF/heightfield collision | M6 |
 | CPU particles | C | §6.2 | M3 |
 | Post: tonemappers, auto exposure, DOF bokeh, SSAO, glow modes + lens dirt, LUT, BCS | C | §6.2 (+ lens dirt, BCS adjustments) | M5–M6 |
@@ -1279,7 +1498,7 @@ Legend: C = covered, P = partial, M = missing, I = intentionally different.
 | Procedural geometry API | M | Pc.Mesh_Builder (surface tool equivalent) | M5 |
 | Path3D / PathFollow3D | M | Curve3D + path-follow | M6 |
 | glTF export (editor and runtime) | M | glTF writer (cgltf write) for scenes/meshes | M9 |
-| Procedural noise | M | Pc.Noise (Perlin/Simplex/cellular, FBM) — pure Ada, SPARK candidate | M3 |
+| Procedural noise | M | Pc.Noise (Perlin/Simplex/cellular, fBm, ridged, domain-warp) — pure Ada, SPARK candidate; fractal generators and shader nodes go further (§19.2) | M3 / M7 (shader nodes) |
 
 ### A.7 Physics
 
@@ -1454,6 +1673,31 @@ Legend: C = covered, P = partial, M = missing, I = intentionally different.
 | Mobile features (IAP, ads, PiP) | I | Optional platform-service modules: in-app purchases, ads, notifications, PiP behind `Pc.Services.Store`/`Platform` | M9 |
 | Licence: open source MIT | I | Commercial, all rights reserved (§15) | — |
 
+### A.21 Signature features beyond Godot (draft 0.9)
+
+These rows are **not Godot parity items**. Godot already has useful pieces in the same neighbourhood
+(procedural noise, fog volumes, decals, perspective cameras, some 2.5D helpers); the point of §19 is that
+Poncelet treats projective geometry, fractals, and density as first-class pillars with a shared Ada core,
+seeded determinism, and tool/CLI/MCP exposure. The first column is the Poncelet feature.
+
+| Poncelet feature | vs typical Godot-level offer | Plan | Milestone |
+|---|---|---|---|
+| Homogeneous points/lines/planes, points at infinity, incidence, cross-ratio, duality (`Pc.Math.Projective`) | Beyond (math libraries exist; not a first-class engine/editor pillar) | SPARK-ready core types and contracts, §19.1 | M0 |
+| Projective camera model, infinite far plane, 2.5D / fake-3D projection modes | Beyond (cameras and some 2.5D helpers exist; not a projective model) | Built on `Pc.Math.Projective`; all renderer tiers | M3 (2.5D) / M5 (camera, far plane) |
+| Perspective grids, horizon and vanishing-point guides | Beyond | 2D/3D editor guides, CLI/MCP `set_perspective_guides` | M3 |
+| Homography-based decals, projectors, texture mapping | Beyond clustered decals (A.5) | Projectors from plane-to-plane homographies; cheap fallback on compatibility | M6 |
+| Anamorphic / non-standard projections; portals and mirrors; AR camera calibration | Beyond | Documented now; built post-launch with OpenXR where relevant | M9 |
+| Fractal noise (fBm, ridged, domain-warp), Diamond-square | Extends procedural noise (A.6) | Pure Ada `Pc.Noise`, seeded, hashed | M3 |
+| L-systems and IFS generators | Beyond | Deterministic mesh/stroke generation, iteration caps | M3 |
+| Escape-time Mandelbrot/Julia visual-shader nodes + mobile/web budgets | Beyond generic shader graphs (A.14) | Nodes in the M7 visual shader editor; caps per tier | M7 |
+| Seeded fractal world / level generation | Beyond | `poncelet gen world`, MCP `generate_world`, seed parity | M7 |
+| SDF raymarched fractals (Mandelbulb) with LOD; infinite-zoom perturbation | Beyond | High-end first; mesh/impostor fallback on compatibility | M9 |
+| Density-field resource (scalar/vector, dense/sparse, text `.pres`) | Beyond fog volumes as a one-off | `Pc.Density`, canonical serialisation, editor painting | M6 |
+| Fog/smoke driven by density; scatter; AI heat maps; density physics queries | Extends volumetric fog (A.5) and queries (A.7) | Shared field resource; works headless and on web | M6 |
+| Basic marching-cubes isosurface from a density field | Beyond | Baked mesh from a documented field, golden hash | M7 |
+| Fractal density volumes (noise/IFS → field → fog/scatter/mesh) | Beyond | v1 pipeline in first release; quality pass later | M7 |
+| SPH fluid density; destructible voxels; dual contouring | Beyond | Post-launch | M9 |
+
 ### A.99 Intentional differences (honest summary, draft 0.7)
 The earlier "desktop only" differences are **removed**: web, Android, iOS, consoles (via partners), XR, the
 compatibility/mobile renderers, RTL text, and a community asset library are all planned (see rows above). Remaining differences:
@@ -1536,3 +1780,13 @@ is not copied.
 | `poncelet sim`, `--compare`, report format, periodic report files, decision-matrix support | Metric choices and summary groupings of a game |
 | Web host: boot, stamp, update check, publish + curl-verify, audio buses, input, saves, F9, smoke tests | Splash effects (Reckoning rain), menus' content, achievements' rules |
 | Mission/achievement **bitfield hook** | Missions and achievements themselves |
+
+## Changelog
+
+- **0.9 (2026-11-20).** Name kept: Poncelet, after Jean-Victor Poncelet and projective geometry. New §19
+  **Signature features beyond Godot** (projective geometry, fractals, density) with first-release vs later cut;
+  mentioned in the vision, scope, architecture, math, cameras, editor, CLI/MCP, and milestones. Appendix A.21
+  adds beyond-parity rows. Implementation plan gains matching steps (see that file for the new totals).
+- **0.8 (2026-11-19).** Reference implementations (Reckoning, Roguelike Jungle, Colony4X, Hood Simulator),
+  host ABI v1, F9 report format, web host standard, seed parity; plan at 119 steps. See the draft 0.8 status
+  line and Appendix B for the full record.
